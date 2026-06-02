@@ -1,0 +1,40 @@
+# Build
+gui/build/
+*.o
+*.obj
+*.exe
+*.app
+
+# IDE
+.idea/
+.vscode/
+*.xcworkspace/
+xcuserdata/
+xcshareddata/
+*.xcuserstate
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.AppleDouble
+.LSOverride
+Icon
+.Spotlight-V100
+.Trashes
+
+# Temp
+/tmp/
+*.swp
+*.swo
+*~
+
+# OpenCode
+.omo/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+_deps/
