@@ -1721,10 +1721,26 @@ Summary summarizeHap(const ByteView& view)
                     if (devCert.empty()) devCert = getStr("development-certificate");
                     if (!devCert.empty()) {
                         pinfo.developerCertificate = devCert;
-                        auto b = devCert.find("-----BEGIN CERTIFICATE-----");
-                        auto e = devCert.find("-----END CERTIFICATE-----");
+                        std::string unescaped;
+                        for (size_t i = 0; i < devCert.size(); ++i) {
+                            if (devCert[i] == '\\' && i + 1 < devCert.size()) {
+                                switch (devCert[i + 1]) {
+                                case 'n': unescaped += '\n'; break;
+                                case 't': unescaped += '\t'; break;
+                                case 'r': unescaped += '\r'; break;
+                                case '\\': unescaped += '\\'; break;
+                                case '"': unescaped += '"'; break;
+                                default: unescaped += devCert[i + 1]; break;
+                                }
+                                ++i;
+                            } else {
+                                unescaped += devCert[i];
+                            }
+                        }
+                        auto b = unescaped.find("-----BEGIN CERTIFICATE-----");
+                        auto e = unescaped.find("-----END CERTIFICATE-----");
                         if (b != std::string::npos && e != std::string::npos) {
-                            std::string b64 = devCert.substr(b + 27, e - b - 27);
+                            std::string b64 = unescaped.substr(b + 27, e - b - 27);
                             b64.erase(std::remove(b64.begin(), b64.end(), '\n'), b64.end());
                             b64.erase(std::remove(b64.begin(), b64.end(), '\r'), b64.end());
                             b64.erase(std::remove(b64.begin(), b64.end(), ' '), b64.end());
