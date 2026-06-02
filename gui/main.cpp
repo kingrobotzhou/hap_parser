@@ -647,56 +647,6 @@ static void renderSummaryTab() {
         ImGui::Unindent(12.0f);
     }
 
-    const char* devCertFp = hap_get_profile_field("certfp", g_ctx);
-    if (std::strlen(devCertFp) > 0) {
-        if (ImGui::CollapsingHeader(_("Identity Chain", "身份链"), ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Indent(12.0f);
-            std::map<std::string, CertNode> known;
-            for (auto& n : g_certNodes) known[n.sha256] = n;
-
-            ImGui::BulletText("Dev Cert");
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
-            ImGui::TextColored(ImVec4(0.2f,0.78f,0.35f,1.0f), " %s", _("valid", "有效"));
-            ImGui::Indent(20.0f);
-            ImGui::TextDisabled("SHA256: %s", devCertFp);
-            const char* devId = hap_get_profile_field("devid", g_ctx);
-            if (std::strlen(devId) > 0) ImGui::TextDisabled("Dev ID: %s", devId);
-            free((char*)devId);
-            ImGui::Unindent(20.0f);
-
-            auto it = known.find(devCertFp);
-            if (it != known.end()) {
-                std::string nextIssuer = it->second.issuer;
-                while (!nextIssuer.empty()) {
-                    bool found = false;
-                    for (auto& kv : known) {
-                        if (kv.second.subject == nextIssuer) {
-                            ImGui::BulletText("%s", extractCN(kv.second.subject).c_str());
-                            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
-                            ImGui::TextColored(kv.second.valid ? ImVec4(0.2f,0.78f,0.35f,1.0f)
-                                                               : ImVec4(1.0f,0.23f,0.19f,1.0f),
-                                               " %s", kv.second.valid ? _("valid", "有效") : _("invalid", "无效"));
-                            ImGui::Indent(20.0f);
-                            ImGui::TextDisabled("%s  |  %s", kv.second.keyInfo.c_str(), kv.second.validity.c_str());
-                            ImGui::TextDisabled("SHA256: %s", kv.second.sha256.c_str());
-                            ImGui::Unindent(20.0f);
-                            nextIssuer = kv.second.issuer;
-                            if (kv.second.subject == kv.second.issuer) nextIssuer.clear();
-                            found = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        ImGui::TextDisabled("  (system trust store) %s", extractCN(nextIssuer).c_str());
-                        break;
-                    }
-                }
-            }
-            ImGui::Unindent(12.0f);
-        }
-    }
-    free((char*)devCertFp);
-
     if (!g_nestedHaps.empty() && ImGui::CollapsingHeader(
             _("Inner HAP Packages", "内部 HAP 包"), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent(12.0f);
@@ -773,6 +723,68 @@ static void renderCertificatesTab() {
         ImGui::Unindent(20.0f);
     }
     if (prevChain >= 0) ImGui::TreePop();
+
+    const char* devCertFp = hap_get_profile_field("certfp", g_ctx);
+    if (std::strlen(devCertFp) > 0) {
+        ImGui::Spacing();
+        if (ImGui::CollapsingHeader(_("Identity Chain", "身份链"), ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Indent(12.0f);
+            std::map<std::string, CertNode> known;
+            for (auto& n : g_certNodes) known[n.sha256] = n;
+
+            ImGui::BulletText("Dev Cert");
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
+            ImGui::TextColored(ImVec4(0.2f,0.78f,0.35f,1.0f), " %s", _("valid", "有效"));
+            ImGui::Indent(20.0f);
+            ImGui::TextDisabled("SHA256: %s", devCertFp);
+            const char* devId = hap_get_profile_field("devid", g_ctx);
+            if (std::strlen(devId) > 0) ImGui::TextDisabled("Dev ID: %s", devId);
+            free((char*)devId);
+            ImGui::Unindent(20.0f);
+
+            auto it = known.find(devCertFp);
+            if (it != known.end()) {
+                std::string nextIssuer = it->second.issuer;
+                while (!nextIssuer.empty()) {
+                    bool found = false;
+                    for (auto& kv : known) {
+                        if (kv.second.subject == nextIssuer) {
+                            ImGui::Text("  %s %s", _("issuer match", "发行者匹配"),
+                                        kv.second.valid ? "OK" : "MISMATCH");
+                            ImGui::BulletText("%s", extractCN(kv.second.subject).c_str());
+                            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
+                            ImGui::TextColored(kv.second.valid ? ImVec4(0.2f,0.78f,0.35f,1.0f)
+                                                               : ImVec4(1.0f,0.23f,0.19f,1.0f),
+                                               " %s", kv.second.valid ? _("valid", "有效") : _("invalid", "无效"));
+                            ImGui::Indent(20.0f);
+                            ImGui::TextDisabled("%s  |  %s", kv.second.keyInfo.c_str(), kv.second.validity.c_str());
+                            ImGui::TextDisabled("SHA256: %s", kv.second.sha256.c_str());
+                            ImGui::Unindent(20.0f);
+                            nextIssuer = kv.second.issuer;
+                            if (kv.second.subject == kv.second.issuer) {
+                                ImGui::Text("  %s", _("root self-signed", "根证书自签名"));
+                                nextIssuer.clear();
+                            }
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        ImGui::TextColored(ImVec4(1.0f,0.58f,0.0f,1.0f),
+                                          "  %s %s", _("trust anchor:", "信任锚点:"),
+                                          extractCN(nextIssuer).c_str());
+                        ImGui::TextDisabled("  (system trust store)");
+                        break;
+                    }
+                }
+            } else {
+                ImGui::TextDisabled("%s", devCertFp);
+                ImGui::TextDisabled("  (not in signing chain)");
+            }
+            ImGui::Unindent(12.0f);
+        }
+    }
+    free((char*)devCertFp);
 
     for (size_t ni = 0; ni < g_nestedHaps.size(); ni++) {
         auto& nh = g_nestedHaps[ni];
