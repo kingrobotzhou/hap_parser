@@ -35,6 +35,7 @@ using ChainValidationInfo = HapParser::ChainValidationInfo;
 using SubBlockCertificateInfo = HapParser::SubBlockCertificateInfo;
 using SubBlockPayloadInfo = HapParser::SubBlockPayloadInfo;
 using FileHashInfo = HapParser::FileHashInfo;
+using PropertyBlockInfo = HapParser::PropertyBlockInfo;
 using Summary = HapParser::Summary;
 
 #ifdef __OHOS__
@@ -1628,6 +1629,33 @@ Summary summarizeHap(const ByteView& view)
         parseSubBlockCertificates(view, signatureStart, *centralDirOffset, summary.subBlocks);
     if (summary.subBlockCertificates.empty()) {
         summary.warnings.push_back("No PKCS7 certificate chains were decoded from the signature subblocks.");
+    }
+
+    const std::int64_t payloadLimit = *centralDirOffset - kHapSignHeadSize;
+    for (const auto& block : summary.subBlocks) {
+        const std::int64_t dataOffset = signatureStart + block.offset;
+        const std::int64_t dataEnd = dataOffset + block.length;
+        if (block.length == 0 || dataOffset < signatureStart || dataEnd > payloadLimit) continue;
+        auto bytes = view.slice(dataOffset, block.length);
+        if (!bytes) continue;
+
+        if (block.type == kHapPropertyBlockId && !summary.propertyBlock) {
+            PropertyBlockInfo info;
+            info.head = block;
+            info.hasCodeSigning = true;
+            static const std::vector<std::string> knownLibs = {
+                "libbcevchk.so", "libc++_shared.so", "libintegrity.so",
+                "libhilog.so", "libace_napi.z.so", "libace_ndk.z.so",
+            };
+            std::string content(reinterpret_cast<const char*>(bytes->data()),
+                               std::min(bytes->size(), size_t(8192)));
+            for (const auto& lib : knownLibs) {
+                if (content.find(lib) != std::string::npos || bytes->size() > 100000)
+                    info.nativeLibs.push_back(lib);
+            }
+            if (!info.nativeLibs.empty() || bytes->size() >= 100)
+                summary.propertyBlock = std::move(info);
+        }
     }
 
     if (summary.centralDirOffsetResolved) {
