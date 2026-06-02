@@ -140,6 +140,7 @@ public:
         std::string rawJson;
         std::string developerCertificate;
         std::string developerCertFingerprint;
+        CertificateInfo developerCertInfo;
     };
 
     struct PropertyBlockInfo {
@@ -169,6 +170,9 @@ public:
         std::optional<PropertyBlockInfo> propertyBlock;
         std::vector<FileHashInfo> fileHashes;
         std::vector<std::string> warnings;
+        std::vector<CertificateInfo> identityChain;
+        bool identityChainVerified = false;
+        std::vector<std::string> identityIssues;
     };
 
     HapParser() = default;

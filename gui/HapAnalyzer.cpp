@@ -193,6 +193,36 @@ int hap_get_chain_content_ok(int ci, HapAnalyzerCtx* ctx) {
     if (!chain.sigVerification || !chain.sigVerification->digestVerified) return -1;
     return chain.sigVerification->contentIntegrityOk ? 1 : 0;
 }
+int hap_get_identity_chain_count(HapAnalyzerCtx* ctx) {
+    return ctx->summary ? (int)ctx->summary->identityChain.size() : 0;
+}
+const char* hap_get_identity_cert_subject(int idx, HapAnalyzerCtx* ctx) {
+    if (!ctx->summary || idx < 0 || idx >= (int)ctx->summary->identityChain.size()) return retain("");
+    return retain(ctx->summary->identityChain[idx].subject);
+}
+const char* hap_get_identity_cert_sha256(int idx, HapAnalyzerCtx* ctx) {
+    if (!ctx->summary || idx < 0 || idx >= (int)ctx->summary->identityChain.size()) return retain("");
+    return retain(ctx->summary->identityChain[idx].sha256Fingerprint);
+}
+const char* hap_get_identity_cert_key_info(int idx, HapAnalyzerCtx* ctx) {
+    if (!ctx->summary || idx < 0 || idx >= (int)ctx->summary->identityChain.size()) return retain("");
+    auto& c = ctx->summary->identityChain[idx];
+    std::ostringstream k;
+    k << c.publicKeyAlgorithm << " " << c.publicKeyBits << "-bit V" << c.certVersion;
+    return retain(k.str());
+}
+const char* hap_get_identity_cert_validity(int idx, HapAnalyzerCtx* ctx) {
+    if (!ctx->summary || idx < 0 || idx >= (int)ctx->summary->identityChain.size()) return retain("");
+    auto& c = ctx->summary->identityChain[idx];
+    return retain(c.notBefore + " ~ " + c.notAfter);
+}
+int hap_get_identity_cert_is_valid(int idx, HapAnalyzerCtx* ctx) {
+    if (!ctx->summary || idx < 0 || idx >= (int)ctx->summary->identityChain.size()) return 0;
+    return ctx->summary->identityChain[idx].isCurrentlyValid ? 1 : 0;
+}
+int hap_get_identity_verified(HapAnalyzerCtx* ctx) {
+    return ctx->summary ? (ctx->summary->identityChainVerified ? 1 : 0) : 0;
+}
 int hap_get_chain_block_count(HapAnalyzerCtx* ctx) { return ctx->summary && ctx->summary->signatureFooter ? ctx->summary->signatureFooter->blockCount : 0; }
 int hap_get_chain_version(HapAnalyzerCtx* ctx) { return ctx->summary && ctx->summary->signatureFooter ? ctx->summary->signatureFooter->version : 0; }
 

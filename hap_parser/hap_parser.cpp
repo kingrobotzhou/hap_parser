@@ -1818,6 +1818,69 @@ Summary summarizeHap(const ByteView& view)
         }
     }
 
+    if (summary.profile && !summary.profile->developerCertificate.empty()) {
+        auto unescape = [](const std::string& s) -> std::string {
+            std::string r;
+            for (size_t i = 0; i < s.size(); ++i) {
+                if (s[i] == '\\' && i+1 < s.size()) {
+                    switch (s[i+1]) { case 'n': r+='\n'; break; case 't': r+='\t'; break;
+                    case 'r': r+='\r'; break; case '\\': r+='\\'; break;
+                    case '"': r+='"'; break; default: r+=s[i+1]; break; } ++i;
+                } else r += s[i];
+            } return r;
+        };
+        std::string pem = unescape(summary.profile->developerCertificate);
+        auto b = pem.find("-----BEGIN CERTIFICATE-----");
+        auto e = pem.find("-----END CERTIFICATE-----");
+        if (b != std::string::npos && e != std::string::npos) {
+            std::string b64 = pem.substr(b+27, e-b-27);
+            b64.erase(std::remove(b64.begin(),b64.end(),'\n'),b64.end());
+            b64.erase(std::remove(b64.begin(),b64.end(),'\r'),b64.end());
+            b64.erase(std::remove(b64.begin(),b64.end(),' '),b64.end());
+            BIO* b64Bio = BIO_new_mem_buf(b64.data(), (int)b64.size());
+            BIO* bf = BIO_new(BIO_f_base64());
+            BIO_set_flags(bf, BIO_FLAGS_BASE64_NO_NL);
+            BIO* bio = BIO_push(bf, b64Bio);
+            std::vector<unsigned char> der(8192);
+            int dl = BIO_read(bio, der.data(), 8192);
+            if (dl > 0) {
+                const unsigned char* dp = der.data();
+                X509* devCert = d2i_X509(nullptr, &dp, dl);
+                if (devCert) {
+                    auto info = extractCertificateInfo(devCert);
+                    info.sha256Fingerprint = summary.profile->developerCertFingerprint;
+                    summary.profile->developerCertInfo = info;
+                    summary.identityChain.push_back(info);
+
+                    std::string nextIssuer = info.issuer;
+                    while (!nextIssuer.empty() && nextIssuer != info.subject) {
+                        bool found = false;
+                        for (auto& chain : summary.subBlockCertificates) {
+                            for (auto& c : chain.certificates) {
+                                if (c.subject == nextIssuer) {
+                                    summary.identityChain.push_back(c);
+                                    nextIssuer = c.issuer;
+                                    if (c.subject == c.issuer) nextIssuer.clear();
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (found) break;
+                        }
+                        if (!found) {
+                            summary.identityIssues.push_back(
+                                "Trust anchor not in signing chain");
+                            break;
+                        }
+                    }
+                    summary.identityChainVerified = summary.identityIssues.empty();
+                    X509_free(devCert);
+                }
+            }
+            BIO_free_all(bio);
+        }
+    }
+
     return summary;
 }
 

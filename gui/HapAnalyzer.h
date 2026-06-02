@@ -26,6 +26,13 @@ const char* hap_get_cert_key_info(int chainIdx, int certIdx, HapAnalyzerCtx* ctx
 const char* hap_get_cert_validity(int chainIdx, int certIdx, HapAnalyzerCtx* ctx);
 int hap_get_cert_is_valid(int chainIdx, int certIdx, HapAnalyzerCtx* ctx);
 int hap_get_chain_content_ok(int chainIdx, HapAnalyzerCtx* ctx);
+int hap_get_identity_chain_count(HapAnalyzerCtx* ctx);
+const char* hap_get_identity_cert_subject(int idx, HapAnalyzerCtx* ctx);
+const char* hap_get_identity_cert_sha256(int idx, HapAnalyzerCtx* ctx);
+const char* hap_get_identity_cert_key_info(int idx, HapAnalyzerCtx* ctx);
+const char* hap_get_identity_cert_validity(int idx, HapAnalyzerCtx* ctx);
+int hap_get_identity_cert_is_valid(int idx, HapAnalyzerCtx* ctx);
+int hap_get_identity_verified(HapAnalyzerCtx* ctx);
 int hap_get_chain_block_count(HapAnalyzerCtx* ctx);
 int hap_get_chain_version(HapAnalyzerCtx* ctx);
 
