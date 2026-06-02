@@ -729,10 +729,8 @@ static void renderCertificatesTab() {
     if (std::strlen(devCertFp) > 0 || idCount > 0) {
         ImGui::Spacing();
         char idHdr[128];
-        int verified = hap_get_identity_verified(g_ctx);
-        std::snprintf(idHdr, sizeof(idHdr), "%s  (%d certs)  %s",
-                      _("Identity Chain", "身份链"), idCount > 0 ? idCount : 1,
-                      verified ? _("[issuer match OK]", "[发行者匹配]") : "");
+        std::snprintf(idHdr, sizeof(idHdr), "%s  (%d certs)",
+                      _("Identity Chain", "身份链"), idCount > 0 ? idCount : 1);
         if (ImGui::CollapsingHeader(idHdr, ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Indent(12.0f);
             for (int idx = 0; idx < idCount; idx++) {
@@ -741,26 +739,28 @@ static void renderCertificatesTab() {
                 std::string key  = getAndFree(hap_get_identity_cert_key_info(idx, g_ctx));
                 std::string val  = getAndFree(hap_get_identity_cert_validity(idx, g_ctx));
                 bool valid = hap_get_identity_cert_is_valid(idx, g_ctx) != 0;
+                bool isAnchor = sha.empty();
 
-                const char* role = (idx == 0) ? "Dev Cert" : ((idx == idCount-1) ? "Root" : "Issuer");
-                ImGui::BulletText("%s", idx == 0 ? (std::string("Dev Cert (") + extractCN(subj) + ")").c_str()
-                                                : extractCN(subj).c_str());
-                ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
-                ImGui::TextColored(valid ? ImVec4(0.2f,0.78f,0.35f,1.0f)
-                                         : ImVec4(1.0f,0.23f,0.19f,1.0f),
-                                   " %s", valid ? _("valid", "有效") : _("invalid", "无效"));
-                ImGui::Indent(20.0f);
-                ImGui::TextDisabled("%s  |  %s", key.c_str(), val.c_str());
-                ImGui::TextDisabled("SHA256: %s", sha.c_str());
-                ImGui::Unindent(20.0f);
+                if (isAnchor) {
+                    ImGui::Text("%s %s  %s",
+                                _("  trust anchor", "  系统信任库"),
+                                _("SYS", "系统"),
+                                extractCN(subj).c_str());
+                } else {
+                    const char* role = (idx == 0) ? "Dev  " : "     ";
+                    ImGui::Text("%s %s", role, extractCN(subj).c_str());
+                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
+                    ImGui::TextColored(valid ? ImVec4(0.2f,0.78f,0.35f,1.0f)
+                                             : ImVec4(1.0f,0.23f,0.19f,1.0f),
+                                       " %s", valid ? _("valid", "有效") : _("invalid", "无效"));
+                    ImGui::Indent(20.0f);
+                    ImGui::TextDisabled("%s  |  %s", key.c_str(), val.c_str());
+                    ImGui::TextDisabled("SHA256: %s", sha.c_str());
+                    ImGui::Unindent(20.0f);
+                }
             }
             if (idCount == 0 && std::strlen(devCertFp) > 0) {
-                ImGui::BulletText("Dev Cert");
-                ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
-                ImGui::TextColored(ImVec4(0.2f,0.78f,0.35f,1.0f), " %s", _("valid", "有效"));
-                ImGui::Indent(20.0f);
-                ImGui::TextDisabled("SHA256: %s", devCertFp);
-                ImGui::Unindent(20.0f);
+                ImGui::BulletText("Dev Cert  SHA256: %s", devCertFp);
             }
             ImGui::Unindent(12.0f);
         }

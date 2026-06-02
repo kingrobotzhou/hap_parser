@@ -1868,9 +1868,12 @@ Summary summarizeHap(const ByteView& view)
                             if (found) break;
                         }
                         if (!found) {
-                            summary.identityIssues.push_back(
-                                "Trust anchor not in signing chain");
-                            break;
+                            CertificateInfo anchor;
+                            anchor.subject = nextIssuer;
+                            anchor.isTrustAnchor = true;
+                            anchor.isCurrentlyValid = true;
+                            summary.identityChain.push_back(anchor);
+                            nextIssuer.clear();
                         }
                     }
                     summary.identityChainVerified = summary.identityIssues.empty();
