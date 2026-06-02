@@ -36,6 +36,7 @@ using SubBlockCertificateInfo = HapParser::SubBlockCertificateInfo;
 using SubBlockPayloadInfo = HapParser::SubBlockPayloadInfo;
 using FileHashInfo = HapParser::FileHashInfo;
 using PropertyBlockInfo = HapParser::PropertyBlockInfo;
+using ProfileInfo = HapParser::ProfileInfo;
 using Summary = HapParser::Summary;
 
 #ifdef __OHOS__
@@ -1672,6 +1673,91 @@ Summary summarizeHap(const ByteView& view)
             }
             if (!info.nativeLibs.empty() || bytes->size() >= 100)
                 summary.propertyBlock = std::move(info);
+        }
+
+        if (block.type == kHapProfileBlockId && !summary.profile) {
+            std::string json(reinterpret_cast<const char*>(bytes->data()),
+                           std::min(bytes->size(), size_t(65536)));
+            auto js = json.find('{');
+            if (js != std::string::npos) {
+                ProfileInfo pinfo;
+                pinfo.head = block;
+                pinfo.rawJson = json.substr(js);
+
+                auto getStr = [&](const std::string& key) -> std::string {
+                    auto p = pinfo.rawJson.find("\"" + key + "\"");
+                    if (p == std::string::npos) return {};
+                    p = pinfo.rawJson.find('"', p + key.size() + 3);
+                    if (p == std::string::npos) return {};
+                    auto e = pinfo.rawJson.find('"', p + 1);
+                    if (e == std::string::npos) return {};
+                    return pinfo.rawJson.substr(p + 1, e - p - 1);
+                };
+                auto getInt = [&](const std::string& key) -> std::int32_t {
+                    auto p = pinfo.rawJson.find("\"" + key + "\"");
+                    if (p == std::string::npos) return 0;
+                    p = pinfo.rawJson.find(':', p + key.size() + 2);
+                    if (p == std::string::npos) return 0;
+                    while (++p < (std::int64_t)pinfo.rawJson.size() && std::isspace(pinfo.rawJson[p]));
+                    std::int32_t v = 0;
+                    while (p < (std::int64_t)pinfo.rawJson.size() && std::isdigit(pinfo.rawJson[p]))
+                        v = v * 10 + (pinfo.rawJson[p++] - '0');
+                    return v;
+                };
+
+                pinfo.versionName = getStr("version-name");
+                pinfo.versionCode = getInt("version-code");
+                pinfo.type = getStr("type");
+                pinfo.issuer = getStr("issuer");
+                pinfo.uuid = getStr("uuid");
+
+                auto bi = pinfo.rawJson.find("\"bundle-info\"");
+                if (bi != std::string::npos) {
+                    pinfo.bundleName = getStr("bundle-name");
+                    pinfo.developerId = getStr("developer-id");
+                    pinfo.appIdentifier = getStr("app-identifier");
+                    pinfo.apl = getStr("apl");
+                    std::string devCert = getStr("distribution-certificate");
+                    if (devCert.empty()) devCert = getStr("development-certificate");
+                    if (!devCert.empty()) {
+                        pinfo.developerCertificate = devCert;
+                        auto b = devCert.find("-----BEGIN CERTIFICATE-----");
+                        auto e = devCert.find("-----END CERTIFICATE-----");
+                        if (b != std::string::npos && e != std::string::npos) {
+                            std::string b64 = devCert.substr(b + 27, e - b - 27);
+                            b64.erase(std::remove(b64.begin(), b64.end(), '\n'), b64.end());
+                            b64.erase(std::remove(b64.begin(), b64.end(), '\r'), b64.end());
+                            b64.erase(std::remove(b64.begin(), b64.end(), ' '), b64.end());
+                            BIO* b64Bio = BIO_new_mem_buf(b64.data(), static_cast<int>(b64.size()));
+                            BIO* b64Filter = BIO_new(BIO_f_base64());
+                            BIO_set_flags(b64Filter, BIO_FLAGS_BASE64_NO_NL);
+                            BIO* bio = BIO_push(b64Filter, b64Bio);
+                            std::vector<unsigned char> der(4096);
+                            int derLen = BIO_read(bio, der.data(), 4096);
+                            if (derLen > 0) {
+                                unsigned char md[EVP_MAX_MD_SIZE];
+                                unsigned int mdLen = 0;
+                                const unsigned char* derPtr = der.data();
+                                X509* cert = d2i_X509(nullptr, &derPtr, derLen);
+                                if (cert) {
+                                    if (X509_digest(cert, EVP_sha256(), md, &mdLen) == 1 && mdLen > 0) {
+                                        std::ostringstream fp;
+                                        for (unsigned int i = 0; i < mdLen; ++i) {
+                                            if (i > 0) fp << ":";
+                                            fp << std::hex << std::uppercase << std::setw(2)
+                                               << std::setfill('0') << static_cast<int>(md[i]);
+                                        }
+                                        pinfo.developerCertFingerprint = fp.str();
+                                    }
+                                    X509_free(cert);
+                                }
+                            }
+                            BIO_free_all(bio);
+                        }
+                    }
+                }
+                summary.profile = std::move(pinfo);
+            }
         }
     }
 
