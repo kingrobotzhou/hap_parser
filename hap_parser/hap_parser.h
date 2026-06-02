@@ -38,14 +38,20 @@ public:
         std::string serial;
         std::string notBefore;
         std::string notAfter;
+        std::string publicKeyAlgorithm;
+        int publicKeyBits = 0;
+        std::string certificateSignatureAlgorithm;
+        bool isCA = false;
+        std::vector<std::string> keyUsage;
+        std::vector<std::string> extendedKeyUsage;
+        std::string subjectKeyIdentifier;
+        std::string authorityKeyIdentifier;
         bool isCurrentlyValid = false;
         bool isExpired = false;
         bool isNotYetValid = false;
-        std::string signatureAlgorithm;
-        std::string publicKeyAlgorithm;
-        std::int32_t publicKeyBits = 0;
         std::string sha256Fingerprint;
         std::int32_t certVersion = 0;
+        std::string signatureAlgorithm;
         bool isTrustAnchor = false;
     };
 
