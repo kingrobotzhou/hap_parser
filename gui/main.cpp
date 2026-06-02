@@ -97,8 +97,10 @@ static std::string extractCN(const std::string& subject) {
 }
 
 struct CertNode {
-    std::string  role;      // "leaf", "inter", "root"
+    std::string  role;
     std::string  subject;
+    std::string  issuer;
+    std::string  serial;
     std::string  keyInfo;
     std::string  validity;
     std::string  sha256;
@@ -239,6 +241,7 @@ static void collectNestedEntries(HapAnalyzerCtx* ctx, NestedHap& nh) {
             else if (i == cc - 1) n.role = "root";
             else n.role = "inter";
             n.subject  = getAndFree(hap_get_cert_subject(ci, i, ctx));
+            n.issuer   = getAndFree(hap_get_cert_issuer(ci, i, ctx));
             n.sha256   = getAndFree(hap_get_cert_sha256(ci, i, ctx));
             n.keyInfo  = getAndFree(hap_get_cert_key_info(ci, i, ctx));
             n.validity = getAndFree(hap_get_cert_validity(ci, i, ctx));
@@ -387,6 +390,7 @@ static void loadFile(const std::string& path) {
             else if (i == certCount - 1) n.role = "root";
             else n.role = "inter";
             n.subject  = getAndFree(hap_get_cert_subject(ci, i, g_ctx));
+            n.issuer   = getAndFree(hap_get_cert_issuer(ci, i, g_ctx));
             n.sha256   = getAndFree(hap_get_cert_sha256(ci, i, g_ctx));
             n.keyInfo  = getAndFree(hap_get_cert_key_info(ci, i, g_ctx));
             n.validity = getAndFree(hap_get_cert_validity(ci, i, g_ctx));
@@ -712,8 +716,10 @@ static void renderCertificatesTab() {
                                    : ImVec4(1.00f,0.23f,0.19f,1.0f),
                            " %s", n.valid ? _("valid", "有效") : _("invalid", "无效"));
         ImGui::Indent(20.0f);
-        ImGui::TextDisabled("%s  |  %s  |  %s", n.keyInfo.c_str(),
-                            n.validity.c_str(), n.sha256.c_str());
+        ImGui::TextDisabled("%s  |  %s", n.keyInfo.c_str(), n.validity.c_str());
+        ImGui::TextDisabled("SHA256:  %s", n.sha256.c_str());
+        ImGui::TextDisabled("Issuer:  %s", n.issuer.c_str());
+        ImGui::TextDisabled("Subject: %s", n.subject.c_str());
         ImGui::Unindent(20.0f);
     }
     if (prevChain >= 0) ImGui::TreePop();
@@ -746,8 +752,10 @@ static void renderCertificatesTab() {
                                            : ImVec4(1.00f,0.23f,0.19f,1.0f),
                                    " %s", n.valid ? _("valid", "有效") : _("invalid", "无效"));
                 ImGui::Indent(20.0f);
-                ImGui::TextDisabled("%s  |  %s  |  %s", n.keyInfo.c_str(),
-                                    n.validity.c_str(), n.sha256.c_str());
+                ImGui::TextDisabled("%s  |  %s", n.keyInfo.c_str(), n.validity.c_str());
+                ImGui::TextDisabled("SHA256:  %s", n.sha256.c_str());
+                ImGui::TextDisabled("Issuer:  %s", n.issuer.c_str());
+                ImGui::TextDisabled("Subject: %s", n.subject.c_str());
                 ImGui::Unindent(20.0f);
             }
             if (prev >= 0) ImGui::TreePop();

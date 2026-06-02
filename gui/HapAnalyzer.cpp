@@ -163,6 +163,11 @@ const char* hap_get_cert_subject(int ci, int i, HapAnalyzerCtx* ctx) {
     if (flatIdx >= (int)ctx->certs.size()) return retain("");
     return retain(ctx->certs[flatIdx].subject);
 }
+const char* hap_get_cert_issuer(int ci, int i, HapAnalyzerCtx* ctx) {
+    if (!ctx->summary || ci < 0 || ci >= (int)ctx->summary->subBlockCertificates.size()) return retain("");
+    if (i < 0 || i >= (int)ctx->summary->subBlockCertificates[ci].certificates.size()) return retain("");
+    return retain(ctx->summary->subBlockCertificates[ci].certificates[i].issuer);
+}
 const char* hap_get_cert_sha256(int ci, int i, HapAnalyzerCtx* ctx) {
     if (!ctx->summary) return retain("");
     return retain(ctx->summary->subBlockCertificates[ci].certificates[i].sha256Fingerprint);
