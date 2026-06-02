@@ -543,6 +543,23 @@ CertificateInfo extractCertificateInfo(X509* cert)
     }
 
     info.isCurrentlyValid = isCertificateCurrentlyValid(cert, &info.isExpired, &info.isNotYetValid);
+
+    unsigned char md[EVP_MAX_MD_SIZE];
+    unsigned int mdLen = 0;
+    if (X509_digest(cert, EVP_sha256(), md, &mdLen) == 1 && mdLen > 0) {
+        std::ostringstream fp;
+        for (unsigned int i = 0; i < mdLen; ++i) {
+            if (i > 0) fp << ":";
+            fp << std::hex << std::uppercase << std::setw(2) << std::setfill('0')
+               << static_cast<int>(md[i]);
+        }
+        info.sha256Fingerprint = fp.str();
+    }
+
+    long version = X509_get_version(cert);
+    info.certVersion = static_cast<std::int32_t>(version + 1);
+
+    info.signatureAlgorithm = info.certificateSignatureAlgorithm;
     return info;
 }
 
