@@ -653,26 +653,33 @@ static void renderSummaryTab() {
             ImGui::Indent(12.0f);
             std::map<std::string, CertNode> known;
             for (auto& n : g_certNodes) known[n.sha256] = n;
+
+            ImGui::BulletText("Dev Cert");
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
+            ImGui::TextColored(ImVec4(0.2f,0.78f,0.35f,1.0f), " %s", _("valid", "有效"));
+            ImGui::Indent(20.0f);
+            ImGui::TextDisabled("SHA256: %s", devCertFp);
+            const char* devId = hap_get_profile_field("devid", g_ctx);
+            if (std::strlen(devId) > 0) ImGui::TextDisabled("Dev ID: %s", devId);
+            free((char*)devId);
+            ImGui::Unindent(20.0f);
+
             auto it = known.find(devCertFp);
             if (it != known.end()) {
-                auto printNode = [](const CertNode& n, const char* role, const char* prefix) {
-                    ImGui::BulletText("%s", extractCN(n.subject).c_str());
-                    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
-                    ImGui::TextColored(n.valid ? ImVec4(0.2f,0.78f,0.35f,1.0f)
-                                               : ImVec4(1.0f,0.23f,0.19f,1.0f),
-                                       " %s", n.valid ? _("valid", "有效") : _("invalid", "无效"));
-                    ImGui::Indent(20.0f);
-                    ImGui::TextDisabled("%s  |  %s", n.keyInfo.c_str(), n.validity.c_str());
-                    ImGui::TextDisabled("SHA256: %s", n.sha256.c_str());
-                    ImGui::Unindent(20.0f);
-                };
-                printNode(it->second, "dev", "dev");
                 std::string nextIssuer = it->second.issuer;
                 while (!nextIssuer.empty()) {
                     bool found = false;
                     for (auto& kv : known) {
                         if (kv.second.subject == nextIssuer) {
-                            printNode(kv.second, "inter", "inter");
+                            ImGui::BulletText("%s", extractCN(kv.second.subject).c_str());
+                            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
+                            ImGui::TextColored(kv.second.valid ? ImVec4(0.2f,0.78f,0.35f,1.0f)
+                                                               : ImVec4(1.0f,0.23f,0.19f,1.0f),
+                                               " %s", kv.second.valid ? _("valid", "有效") : _("invalid", "无效"));
+                            ImGui::Indent(20.0f);
+                            ImGui::TextDisabled("%s  |  %s", kv.second.keyInfo.c_str(), kv.second.validity.c_str());
+                            ImGui::TextDisabled("SHA256: %s", kv.second.sha256.c_str());
+                            ImGui::Unindent(20.0f);
                             nextIssuer = kv.second.issuer;
                             if (kv.second.subject == kv.second.issuer) nextIssuer.clear();
                             found = true;
@@ -684,8 +691,6 @@ static void renderSummaryTab() {
                         break;
                     }
                 }
-            } else {
-                ImGui::TextDisabled("%s", devCertFp);
             }
             ImGui::Unindent(12.0f);
         }
