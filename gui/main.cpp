@@ -706,23 +706,15 @@ static void renderCertificatesTab() {
         }
 
         // Cert node
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-        ImGui::TreeNodeEx((void*)(intptr_t)i, flags, "%s", extractCN(n.subject).c_str());
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::Text("Subject:  %s", n.subject.c_str());
-            ImGui::Text("Key:      %s", n.keyInfo.c_str());
-            ImGui::Text("%s    %s", _("Valid:", "有效期:"), n.validity.c_str());
-            ImGui::Text("SHA256:   %s", n.sha256.c_str());
-            ImGui::EndTooltip();
-        }
-
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 120.0f);
-        if (n.valid) {
-            ImGui::TextColored(ImVec4(0.20f, 0.78f, 0.35f, 1.0f), " %s", _("valid", "有效"));
-        } else {
-            ImGui::TextColored(ImVec4(1.00f, 0.23f, 0.19f, 1.0f), " %s", _("invalid", "无效"));
-        }
+        ImGui::BulletText("%s", extractCN(n.subject).c_str());
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
+        ImGui::TextColored(n.valid ? ImVec4(0.20f,0.78f,0.35f,1.0f)
+                                   : ImVec4(1.00f,0.23f,0.19f,1.0f),
+                           " %s", n.valid ? _("valid", "有效") : _("invalid", "无效"));
+        ImGui::Indent(20.0f);
+        ImGui::TextDisabled("%s  |  %s  |  %s", n.keyInfo.c_str(),
+                            n.validity.c_str(), n.sha256.c_str());
+        ImGui::Unindent(20.0f);
     }
     if (prevChain >= 0) ImGui::TreePop();
 
@@ -748,11 +740,15 @@ static void renderCertificatesTab() {
                     }
                 }
                 ImGuiTreeNodeFlags f = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-                ImGui::TreeNodeEx((void*)(intptr_t)(ni*10000 + i), f, "%s", extractCN(n.subject).c_str());
+                ImGui::BulletText("%s", extractCN(n.subject).c_str());
                 ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
                 ImGui::TextColored(n.valid ? ImVec4(0.20f,0.78f,0.35f,1.0f)
                                            : ImVec4(1.00f,0.23f,0.19f,1.0f),
                                    " %s", n.valid ? _("valid", "有效") : _("invalid", "无效"));
+                ImGui::Indent(20.0f);
+                ImGui::TextDisabled("%s  |  %s  |  %s", n.keyInfo.c_str(),
+                                    n.validity.c_str(), n.sha256.c_str());
+                ImGui::Unindent(20.0f);
             }
             if (prev >= 0) ImGui::TreePop();
             ImGui::TreePop();
