@@ -20,6 +20,7 @@
 #include <openssl/evp.h>
 #include <openssl/pkcs7.h>
 #include <openssl/objects.h>
+#include <openssl/sha.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
@@ -33,6 +34,7 @@ using SignerInfo = HapParser::SignerInfo;
 using ChainValidationInfo = HapParser::ChainValidationInfo;
 using SubBlockCertificateInfo = HapParser::SubBlockCertificateInfo;
 using SubBlockPayloadInfo = HapParser::SubBlockPayloadInfo;
+using FileHashInfo = HapParser::FileHashInfo;
 using Summary = HapParser::Summary;
 
 #ifdef __OHOS__
@@ -1627,6 +1629,48 @@ Summary summarizeHap(const ByteView& view)
     if (summary.subBlockCertificates.empty()) {
         summary.warnings.push_back("No PKCS7 certificate chains were decoded from the signature subblocks.");
     }
+
+    if (summary.centralDirOffsetResolved) {
+        std::int64_t cdPos = *summary.centralDirOffsetResolved;
+        while (view.canRead(cdPos, 46)) {
+            auto sigOpt = view.readU32(cdPos);
+            if (!sigOpt || *sigOpt != kZipCentralDirSig) break;
+            auto csOpt = view.readU32(cdPos + 20);
+            auto nlOpt = view.readU16(cdPos + 28);
+            auto elOpt = view.readU16(cdPos + 30);
+            auto clOpt = view.readU16(cdPos + 32);
+            auto lhOpt = view.readU32(cdPos + 42);
+            if (!csOpt || !nlOpt || !elOpt || !clOpt || !lhOpt) break;
+            std::uint32_t nameLen = *nlOpt, extraLen = *elOpt, commentLen = *clOpt;
+            auto nameBytes = view.slice(cdPos + 46, nameLen);
+            if (!nameBytes) break;
+            std::string filename(reinterpret_cast<const char*>(nameBytes->data()), nameBytes->size());
+            std::int64_t dataStart = *lhOpt + 30 + nameLen + extraLen;
+            FileHashInfo fh;
+            fh.filename = filename;
+            fh.size = *csOpt;
+            if (*csOpt > 0 && *csOpt < 100*1024*1024 && view.canRead(dataStart, *csOpt)) {
+                auto fileData = view.slice(dataStart, *csOpt);
+                if (fileData) {
+                    unsigned char hash[SHA256_DIGEST_LENGTH];
+                    SHA256(fileData->data(), fileData->size(), hash);
+                    std::ostringstream hex, fmt;
+                    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
+                        char buf[3];
+                        std::snprintf(buf, sizeof(buf), "%02x", hash[i]);
+                        hex << buf;
+                        if (i > 0) fmt << ":";
+                        fmt << buf;
+                    }
+                    fh.sha256 = hex.str();
+                    fh.sha256Formatted = fmt.str();
+                }
+            }
+            summary.fileHashes.push_back(std::move(fh));
+            cdPos += 46 + nameLen + extraLen + commentLen;
+        }
+    }
+
     return summary;
 }
 
