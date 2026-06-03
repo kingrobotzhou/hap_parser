@@ -29,7 +29,7 @@ jobs:
 
       - name: Package DMG
         run: |
-          APP="gui/build/Release/hap_analyzer_gui.app"
+          APP="gui/build/hap_analyzer_gui.app"
           DMG="hap_analyzer_gui.dmg"
           mkdir -p dmg_staging
           cp -R "$APP" dmg_staging/
