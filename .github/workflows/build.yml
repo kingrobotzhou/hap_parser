@@ -71,17 +71,17 @@ jobs:
             OPENSSL_DIR=$(brew --prefix openssl)
             clang++ -std=c++17 -O2 hap_parser.cpp runtime_verify.cpp hap_parser_main.cpp \
               -I. -I"$OPENSSL_DIR/include" -L"$OPENSSL_DIR/lib" \
-              -lssl -lcrypto -o hap_parser
+              -lssl -lcrypto -o hap_parser-macos
           else
             g++ -std=c++17 -O2 hap_parser.cpp runtime_verify.cpp hap_parser_main.cpp \
-              -I. -lssl -lcrypto -o hap_parser
+              -I. -lssl -lcrypto -o hap_parser-linux
           fi
 
       - name: Upload CLI
         uses: actions/upload-artifact@v4
         with:
           name: hap_parser-cli-${{ matrix.os }}
-          path: hap_parser/hap_parser
+          path: hap_parser/hap_parser-*
 
   release:
     needs: [build-macos-gui, build-cli]
@@ -90,12 +90,19 @@ jobs:
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Prepare release files
+        run: |
+          ls -R release-assets/
+          # Flatten: move all files to root of release-assets
+          find release-assets -type f -exec mv {} release-assets/ \;
+          find release-assets -type d -empty -delete
+          ls release-assets/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            hap_analyzer_gui-macos/hap_analyzer_gui.dmg
-            hap_parser-cli-macos-latest/hap_parser
-            hap_parser-cli-ubuntu-latest/hap_parser
+          files: release-assets/*
           generate_release_notes: true
