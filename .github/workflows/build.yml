@@ -3,6 +3,7 @@ name: Build & Package
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -81,3 +82,20 @@ jobs:
         with:
           name: hap_parser-cli-${{ matrix.os }}
           path: hap_parser/hap_parser
+
+  release:
+    needs: [build-macos-gui, build-cli]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            hap_analyzer_gui-macos/hap_analyzer_gui.dmg
+            hap_parser-cli-macos-latest/hap_parser
+            hap_parser-cli-ubuntu-latest/hap_parser
+          generate_release_notes: true
