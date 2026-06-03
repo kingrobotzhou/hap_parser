@@ -104,5 +104,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/*
+          files: |
+            release-assets/hap_analyzer_gui.dmg
+            release-assets/hap_parser-linux
+            release-assets/hap_parser-macos
           generate_release_notes: true
