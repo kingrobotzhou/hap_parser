@@ -11,6 +11,7 @@ A security analysis tool for HarmonyOS `.hap` and `.app` application packages. P
 - **Provisioning Profile** — Parses profile metadata: bundle name, developer ID, app identifier, permissions, APL level, validity period
 - **Code Signing Integrity** — Detects injected `.so` files not covered by the code-signing block, highlights missing libraries
 - **SHA256 Hashing** — Computes per-file SHA256 hashes and compares against a reference manifest to detect tampering
+- **Runtime Memory Integrity** — Verifies loaded `.so` segments and `.abc` bytecode in process memory at runtime via `/proc/self/maps` and `link_map` cross-reference
 - **Nested HAP Analysis** — Recursively analyzes inner `.hap` packages embedded in `.app` files
 - **Bilingual UI** — English / Chinese toggle
 
@@ -21,7 +22,9 @@ hap_parser/
 ├── hap_parser/          # Core parsing library (C++)
 │   ├── hap_parser.h     #   Public API & data structures
 │   ├── hap_parser.cpp   #   ZIP EOCD, signing block, PKCS7, profile parsing
-│   └── hap_parser_main.cpp  # CLI entry point
+│   ├── hap_parser_main.cpp  # CLI entry point
+│   ├── runtime_verify.h #   Runtime memory integrity verification API
+│   └── runtime_verify.cpp   # ELF segment hashing, /proc/maps parsing, PANDA scanning
 ├── gui/                 # macOS GUI (GLFW + ImGui)
 │   ├── main.cpp         #   ImGui UI: tabs, tables, drag-drop
 │   ├── HapAnalyzer.h    #   C API wrapping the parser
@@ -116,6 +119,34 @@ Load via **File → Load Manifest** or auto-generate from a trusted reference bu
 5. **Validate Chain** — Issuer-Subject links, cryptographic signatures, expiry, and self-signed root checks
 6. **Verify Code Signing** — Cross-reference `.so` files in the ZIP against the code-sign block list; flag injected or missing libraries
 
+## Runtime Verification
+
+After parsing a HAP file, reference hashes for `.so` and `.abc` files are stored in the `Summary` struct. At runtime, call `HapParser::verifyRuntime()` to check loaded libraries against these references:
+
+```cpp
+HapParser parser;
+auto summary = parser.parseFile("app.hap");
+auto result  = HapParser::verifyRuntime(*summary);
+// result.allPassed() → true if all .so segments and .abc files match
+```
+
+### .so Verification
+
+1. Extract **ELF PT_LOAD segment hashes** from ZIP entries — only `p_filesz` (file-mapped portion), excluding `.bss`
+2. Parse `/proc/self/maps` to locate loaded `.so` memory regions
+3. Compute SHA256 of each segment in memory and compare against reference
+
+### .abc Verification
+
+1. Store the SHA256 from the signing block as reference
+2. Scan process memory for `PANDA` magic bytes to locate loaded `.abc` files
+3. Read `file_size` from the Panda header and compute SHA256 of the full data
+
+### Anti-Tampering
+
+- **link_map cross-reference**: Enumerates loaded libraries via `dl_iterate_phdr` (the runtime linker's internal chain) and compares against `/proc/self/maps`. If a library appears in `link_map` but is missing from `maps`, `/proc/self/maps` may have been tampered with.
+- **Graceful fallback**: If `/proc/self/maps` is unavailable, falls back to `link_map` enumeration.
+
 ## License
 
 MIT
@@ -135,6 +166,7 @@ MIT
 - **配置描述文件** — 解析 profile 元数据：包名、开发者 ID、应用标识、权限、APL 级别、有效期
 - **代码签名完整性** — 检测未受代码签名块保护的注入 `.so` 文件，高亮缺失的库文件
 - **SHA256 哈希** — 逐文件计算 SHA256 并对比基准清单，检测篡改
+- **运行时内存校验** — 运行时通过 `/proc/self/maps` 和 `link_map` 交叉验证已加载 `.so` 段和 `.abc` 字节码的完整性
 - **嵌套 HAP 分析** — 递归分析 `.app` 文件中内嵌的子 `.hap` 包
 - **双语界面** — 支持中英文切换
 
@@ -145,7 +177,9 @@ hap_parser/
 ├── hap_parser/          # 核心解析库（C++）
 │   ├── hap_parser.h     #   公共 API 与数据结构
 │   ├── hap_parser.cpp   #   ZIP EOCD、签名块、PKCS7、profile 解析
-│   └── hap_parser_main.cpp  # 命令行入口
+│   ├── hap_parser_main.cpp  # 命令行入口
+│   ├── runtime_verify.h #   运行时内存完整性校验 API
+│   └── runtime_verify.cpp   # ELF 段哈希、/proc/maps 解析、PANDA 扫描
 ├── gui/                 # macOS 图形界面（GLFW + ImGui）
 │   ├── main.cpp         #   ImGui UI：标签页、表格、拖放
 │   ├── HapAnalyzer.h    #   封装解析器的 C API
@@ -239,6 +273,34 @@ hap_parser <文件.hap|文件.app> [选项]
 4. **提取证书** — 通过 OpenSSL DER 解码 PKCS7 签名数据，去重并从叶子到根排序
 5. **验证链** — 检查颁发者-主体关联、密码学签名、有效期及自签名根证书
 6. **校验代码签名** — 将 ZIP 中的 `.so` 文件与代码签名清单交叉比对，标记注入或缺失的库
+
+## 运行时校验
+
+解析 HAP 后，`.so` 和 `.abc` 的参考哈希存储在 `Summary` 结构体中。运行时调用 `HapParser::verifyRuntime()` 即可检查内存中已加载库与参考值是否一致：
+
+```cpp
+HapParser parser;
+auto summary = parser.parseFile("app.hap");
+auto result  = HapParser::verifyRuntime(*summary);
+// result.allPassed() → 所有 .so 段和 .abc 匹配则返回 true
+```
+
+### .so 校验
+
+1. 从 ZIP 条目提取 **ELF PT_LOAD 段哈希** — 只计算 `p_filesz`（文件映射部分），排除 `.bss`
+2. 解析 `/proc/self/maps` 定位已加载 `.so` 的内存区域
+3. 计算内存中各段的 SHA256 并与参考值对比
+
+### .abc 校验
+
+1. 从签名块中获取 SHA256 作为参考值
+2. 扫描进程内存中的 `PANDA` 魔数定位已加载的 `.abc` 文件
+3. 从 Panda 头部读取 `file_size`，计算全文 SHA256 并对比
+
+### 抗篡改
+
+- **link_map 交叉验证**: 通过 `dl_iterate_phdr`（运行时链接器的内部链表）枚举已加载库，与 `/proc/self/maps` 对比。若 `link_map` 中有而 `maps` 中无，说明 `maps` 可能被篡改。
+- **优雅降级**: 若 `/proc/self/maps` 不可用，自动回退到 `link_map` 枚举。
 
 ## 许可证
 

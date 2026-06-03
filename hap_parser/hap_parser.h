@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "runtime_verify.h"
+
 class HapParser {
 public:
     struct EocdInfo {
@@ -174,6 +176,10 @@ public:
         std::vector<CertificateInfo> identityChain;
         bool identityChainVerified = false;
         std::vector<std::string> identityIssues;
+
+        // Runtime verification reference data
+        std::vector<SoReferenceHash> soReferenceHashes;
+        std::vector<AbcReferenceHash> abcReferenceHashes;
     };
 
     HapParser() = default;
@@ -194,4 +200,8 @@ public:
 
     std::optional<Summary> parseFile(const std::string& path) const;
     void printSummary(const Summary& summary, const DisplayOptions& opts = {}) const;
+
+    /// Run runtime memory integrity verification using reference hashes
+    /// extracted from the Summary. Only works on platforms with /proc/self/maps.
+    static RuntimeVerifyResult verifyRuntime(const Summary& summary);
 };

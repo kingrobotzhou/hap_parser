@@ -1,4 +1,5 @@
 #include "hap_parser.h"
+#include "runtime_verify.h"
 
 #include <fstream>
 #include <iomanip>
@@ -96,6 +97,8 @@ public:
     std::int64_t size() const {
         return static_cast<std::int64_t>(bytes_.size());
     }
+
+    const std::vector<std::uint8_t>& data() const { return bytes_; }
 
     bool canRead(std::int64_t offset, std::int64_t length) const {
         return offset >= 0 && length >= 0 &&
@@ -1778,6 +1781,12 @@ Summary summarizeHap(const ByteView& view)
     }
 
     if (summary.centralDirOffsetResolved) {
+        // Collect .so file data offsets/sizes for segment-level hash extraction.
+        // Collect .abc file hashes and raw data offsets for runtime verification.
+        std::vector<std::string> soFileNames;
+        std::vector<std::pair<std::int64_t, std::int64_t>> soOffsetsAndSizes;
+        std::vector<std::pair<std::string, std::string>> abcNameAndSha256;
+
         std::int64_t cdPos = *summary.centralDirOffsetResolved;
         while (view.canRead(cdPos, 46)) {
             auto sigOpt = view.readU32(cdPos);
@@ -1813,8 +1822,30 @@ Summary summarizeHap(const ByteView& view)
                     fh.sha256Formatted = fmt.str();
                 }
             }
+            // Track .so files for segment-level hash extraction
+            if (fh.filename.size() > 3 && fh.filename.substr(fh.filename.size() - 3) == ".so"
+                && fh.size > 0 && view.canRead(dataStart, fh.size)) {
+                soFileNames.push_back(fh.filename);
+                soOffsetsAndSizes.emplace_back(dataStart, fh.size);
+            }
+            // Track .abc files for runtime memory verification
+            if (fh.filename.size() > 4 && fh.filename.substr(fh.filename.size() - 4) == ".abc"
+                && !fh.sha256.empty()) {
+                abcNameAndSha256.emplace_back(fh.filename, fh.sha256);
+            }
             summary.fileHashes.push_back(std::move(fh));
             cdPos += 46 + nameLen + extraLen + commentLen;
+        }
+
+        // Compute ELF segment-level reference hashes for .so files
+        // and collect .abc reference hashes for runtime verification.
+        if (!soFileNames.empty()) {
+            summary.soReferenceHashes = extractSoReferenceHashes(
+                view.data(), soFileNames, soOffsetsAndSizes);
+        }
+        if (!abcNameAndSha256.empty()) {
+            summary.abcReferenceHashes = extractAbcReferenceHashes(
+                abcNameAndSha256);
         }
     }
 
@@ -1987,4 +2018,9 @@ void HapParser::printSummary(const Summary& summary, const DisplayOptions& opts)
     for (const auto& warning : summary.warnings) {
         logMessage(ParserLogLevel::Warn, "Warning: " + warning);
     }
+}
+
+RuntimeVerifyResult HapParser::verifyRuntime(const Summary& summary)
+{
+    return verifyRuntimeIntegrity(summary.soReferenceHashes, summary.abcReferenceHashes);
 }

@@ -41,6 +41,7 @@ set(IMGUI_SOURCES
 set(HAP_PARSER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hap_parser)
 set(HAP_SOURCES
     ${HAP_PARSER_DIR}/hap_parser.cpp
+    ${HAP_PARSER_DIR}/runtime_verify.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/HapAnalyzer.cpp
 )
 set(GUI_SOURCES
