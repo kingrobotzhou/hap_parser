@@ -1840,11 +1840,11 @@ Summary summarizeHap(const ByteView& view)
         // Compute ELF segment-level reference hashes for .so files
         // and collect .abc reference hashes for runtime verification.
         if (!soFileNames.empty()) {
-            summary.soReferenceHashes = extractSoReferenceHashes(
+            summary.soReferenceHashes = RuntimeVerifier::extractSoRefs(
                 view.data(), soFileNames, soOffsetsAndSizes);
         }
         if (!abcNameAndSha256.empty()) {
-            summary.abcReferenceHashes = extractAbcReferenceHashes(
+            summary.abcReferenceHashes = RuntimeVerifier::extractAbcRefs(
                 abcNameAndSha256);
         }
     }
@@ -2018,9 +2018,4 @@ void HapParser::printSummary(const Summary& summary, const DisplayOptions& opts)
     for (const auto& warning : summary.warnings) {
         logMessage(ParserLogLevel::Warn, "Warning: " + warning);
     }
-}
-
-RuntimeVerifyResult HapParser::verifyRuntime(const Summary& summary)
-{
-    return verifyRuntimeIntegrity(summary.soReferenceHashes, summary.abcReferenceHashes);
 }

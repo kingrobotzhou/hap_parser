@@ -203,5 +203,9 @@ public:
 
     /// Run runtime memory integrity verification using reference hashes
     /// extracted from the Summary. Only works on platforms with /proc/self/maps.
-    static RuntimeVerifyResult verifyRuntime(const Summary& summary);
+    static RuntimeVerifyResult verifyRuntime(const Summary& summary) {
+        RuntimeVerifier verifier;
+        verifier.load(summary.soReferenceHashes, summary.abcReferenceHashes);
+        return verifier.verify();
+    }
 };
