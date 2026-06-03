@@ -14,8 +14,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install OpenSSL
-        run: brew install openssl
+      - name: Install dependencies
+        run: brew install openssl glfw
 
       - name: Configure CMake
         working-directory: gui
