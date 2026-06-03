@@ -1,0 +1,80 @@
+name: Build & Package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-macos-gui:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install OpenSSL
+        run: brew install openssl
+
+      - name: Configure CMake
+        working-directory: gui
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DOPENSSL_ROOT_DIR=$(brew --prefix openssl)
+
+      - name: Build
+        working-directory: gui
+        run: cmake --build build --config Release
+
+      - name: Package DMG
+        run: |
+          APP="gui/build/Release/hap_analyzer_gui.app"
+          DMG="hap_analyzer_gui.dmg"
+          mkdir -p dmg_staging
+          cp -R "$APP" dmg_staging/
+          hdiutil create -volname "HAP Analyzer" \
+            -srcfolder dmg_staging \
+            -ov -format UDZO "$DMG"
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: hap_analyzer_gui-macos
+          path: hap_analyzer_gui.dmg
+
+  build-cli:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install OpenSSL (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+
+      - name: Install OpenSSL (macOS)
+        if: runner.os == 'macOS'
+        run: brew install openssl
+
+      - name: Build CLI
+        run: |
+          cd hap_parser
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            OPENSSL_DIR=$(brew --prefix openssl)
+            clang++ -std=c++17 -O2 hap_parser.cpp runtime_verify.cpp hap_parser_main.cpp \
+              -I. -I"$OPENSSL_DIR/include" -L"$OPENSSL_DIR/lib" \
+              -lssl -lcrypto -o hap_parser
+          else
+            g++ -std=c++17 -O2 hap_parser.cpp runtime_verify.cpp hap_parser_main.cpp \
+              -I. -lssl -lcrypto -o hap_parser
+          fi
+
+      - name: Upload CLI
+        uses: actions/upload-artifact@v4
+        with:
+          name: hap_parser-cli-${{ matrix.os }}
+          path: hap_parser/hap_parser
