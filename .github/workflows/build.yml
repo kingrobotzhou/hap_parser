@@ -83,6 +83,19 @@ jobs:
           name: hap_parser-cli-${{ matrix.os }}
           path: hap_parser/hap_parser-*
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install OpenSSL
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: Build & Run Tests
+        run: |
+          g++ -std=c++17 tests/test_runner.cpp hap_parser/hap_parser.cpp hap_parser/runtime_verify.cpp \
+            -I. -Ihap_parser -lssl -lcrypto -o /tmp/test_runner
+          /tmp/test_runner
+
   release:
     needs: [build-macos-gui, build-cli]
     if: startsWith(github.ref, 'refs/tags/v')

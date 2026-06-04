@@ -1,4 +1,5 @@
 #include "AppState.h"
+#include "AppState.h"
 #include "HapAnalyzer.h"
 
 #include "imgui.h"
