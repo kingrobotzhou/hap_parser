@@ -20,19 +20,26 @@ A security analysis tool for HarmonyOS `.hap` and `.app` application packages. P
 ```
 hap_parser/
 ├── hap_parser/          # Core parsing library (C++)
-│   ├── hap_parser.h     #   Public API & data structures
+│   ├── hap_parser.h     #   HapParser class + 15 data structures
 │   ├── hap_parser.cpp   #   ZIP EOCD, signing block, PKCS7, profile parsing
 │   ├── hap_parser_main.cpp  # CLI entry point
-│   ├── runtime_verify.h #   Runtime memory integrity verification API
+│   ├── byte_view.h      #   ByteView utility class (buffer + LE readers)
+│   ├── runtime_verify.h #   RuntimeVerifier class + public types
 │   └── runtime_verify.cpp   # ELF segment hashing, /proc/maps parsing, PANDA scanning
 ├── gui/                 # macOS GUI (GLFW + ImGui)
+│   ├── AppState.h       #   UI state management class
+│   ├── AppState.cpp     #   State management implementation
 │   ├── main.cpp         #   ImGui UI: tabs, tables, drag-drop
-│   ├── HapAnalyzer.h    #   C API wrapping the parser
+│   ├── HapAnalyzer.h    #   C API bridging parser ↔ GUI
 │   ├── HapAnalyzer.cpp  #   C API implementation
 │   ├── macos_bridge.mm  #   macOS file dialog / open handler
 │   ├── imgui/           #   Dear ImGui (vendored)
 │   ├── fonts/           #   UI fonts
 │   └── CMakeLists.txt   #   Build configuration
+├── tests/               # Unit tests
+│   └── test_runner.cpp  #   20 test cases
+├── .github/workflows/   # CI/CD
+│   └── build.yml        #   Build + Test + Release
 └── README.md
 ```
 
@@ -103,6 +110,27 @@ A JSON file mapping filenames to expected SHA256 hashes:
 ```
 
 Load via **File → Load Manifest** or auto-generate from a trusted reference build via **File → Set as Reference**.
+
+## Testing
+
+```bash
+cd hap_parser
+clang++ -std=c++17 ../tests/test_runner.cpp hap_parser.cpp runtime_verify.cpp \
+    -I. -I/opt/homebrew/opt/openssl/include -L/opt/homebrew/opt/openssl/lib \
+    -lssl -lcrypto -o test_runner && ./test_runner
+```
+
+20 test cases covering:
+
+| Category | Tests |
+|---|---|
+| Parsing | Valid HAP, large HAP, empty file, tiny file, corrupted, garbage bytes |
+| Certificates | Chain validation, field completeness, identity chain |
+| Profile | Field extraction, bundle name, developer ID |
+| Runtime | ELF segment hashing, ABC references, `/proc/maps` platform compatibility |
+| Utilities | `ByteView` boundary checks, `RuntimeVerifyResult` helpers |
+
+Tests also run automatically on every push via GitHub Actions.
 
 ## How It Works
 
@@ -175,19 +203,26 @@ MIT
 ```
 hap_parser/
 ├── hap_parser/          # 核心解析库（C++）
-│   ├── hap_parser.h     #   公共 API 与数据结构
+│   ├── hap_parser.h     #   HapParser 类 + 15 个数据结构
 │   ├── hap_parser.cpp   #   ZIP EOCD、签名块、PKCS7、profile 解析
 │   ├── hap_parser_main.cpp  # 命令行入口
-│   ├── runtime_verify.h #   运行时内存完整性校验 API
+│   ├── byte_view.h      #   ByteView 工具类（字节缓冲 + LE 读取）
+│   ├── runtime_verify.h #   RuntimeVerifier 类 + 公共类型
 │   └── runtime_verify.cpp   # ELF 段哈希、/proc/maps 解析、PANDA 扫描
 ├── gui/                 # macOS 图形界面（GLFW + ImGui）
+│   ├── AppState.h       #   UI 状态管理类
+│   ├── AppState.cpp     #   状态管理实现
 │   ├── main.cpp         #   ImGui UI：标签页、表格、拖放
-│   ├── HapAnalyzer.h    #   封装解析器的 C API
+│   ├── HapAnalyzer.h    #   C API 桥接解析器 ↔ GUI
 │   ├── HapAnalyzer.cpp  #   C API 实现
 │   ├── macos_bridge.mm  #   macOS 文件对话框 / 打开事件
 │   ├── imgui/           #   Dear ImGui（本地集成）
 │   ├── fonts/           #   界面字体
 │   └── CMakeLists.txt   #   构建配置
+├── tests/               # 单元测试
+│   └── test_runner.cpp  #   20 个测试用例
+├── .github/workflows/   # CI/CD
+│   └── build.yml        #   构建 + 测试 + 发布
 └── README.md
 ```
 
@@ -258,6 +293,27 @@ hap_parser <文件.hap|文件.app> [选项]
 ```
 
 通过 **文件 → 加载清单** 导入，或在可信基准版本上通过 **文件 → 设为基准** 自动生成。
+
+## 测试
+
+```bash
+cd hap_parser
+clang++ -std=c++17 ../tests/test_runner.cpp hap_parser.cpp runtime_verify.cpp \
+    -I. -I/opt/homebrew/opt/openssl/include -L/opt/homebrew/opt/openssl/lib \
+    -lssl -lcrypto -o test_runner && ./test_runner
+```
+
+20 个测试用例，覆盖：
+
+| 分类 | 测试 |
+|---|---|
+| 解析 | 正常 HAP、大型 HAP、空文件、小文件、损坏文件、随机字节 |
+| 证书 | 链校验、字段完整性、身份链 |
+| Profile | 字段提取、包名、开发者 ID |
+| 运行时 | ELF 段哈希、ABC 引用、`/proc/maps` 平台兼容 |
+| 工具类 | `ByteView` 边界检查、`RuntimeVerifyResult` 辅助方法 |
+
+每次 push 代码时 GitHub Actions 自动运行全部测试。
 
 ## 工作原理
 
