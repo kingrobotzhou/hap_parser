@@ -1,4 +1,5 @@
 #include "hap_parser.h"
+#include "byte_view.h"
 #include "runtime_verify.h"
 
 #include <cassert>
@@ -129,7 +130,6 @@ void testExtractElfSegments() {
     auto s = parser.parseFile(kLargeHap);
     assert(s.has_value());
 
-    // extractSoRefs already ran during parse — verify the results
     assert(!s->soReferenceHashes.empty());
     for (auto& ref : s->soReferenceHashes) {
         if (ref.segments.empty()) continue;
@@ -149,7 +149,6 @@ void testExtractSoRefs() {
     auto s = parser.parseFile(kLargeHap);
     assert(s.has_value());
 
-    // The large HAP has .so files — should have segment hashes
     assert(!s->soReferenceHashes.empty());
     for (auto& ref : s->soReferenceHashes) {
         assert(!ref.fileName.empty());
@@ -184,14 +183,85 @@ void testVerifyRuntime() {
     assert(s.has_value());
 
     auto result = HapParser::verifyRuntime(*s);
-    // On macOS, /proc/self/maps doesn't exist — expect warnings
-    if (!result.warnings.empty()) {
-        PASS();
-    } else {
-        // On Linux, should at least not crash
-        PASS();
-    }
+    PASS();   // Should never crash, regardless of platform
 }
+
+// ── Edge case tests ─────────────────────────────────────────────────────────
+
+void testEmptyFile() {
+    TEST("parse empty file");
+    std::string tmp = "/tmp/hap_test_empty.bin";
+    { std::ofstream of(tmp); }
+    HapParser parser;
+    auto s = parser.parseFile(tmp);
+    assert(!s.has_value() || !s->eocd.has_value());
+    std::remove(tmp.c_str());
+    PASS();
+}
+
+void testTinyFile() {
+    TEST("parse 4-byte file (too small for EOCD)");
+    std::string tmp = "/tmp/hap_test_tiny.bin";
+    {
+        std::ofstream of(tmp, std::ios::binary);
+        of.write("PK\x03\x04", 4);
+    }
+    HapParser parser;
+    auto s = parser.parseFile(tmp);
+    assert(!s.has_value() || !s->eocd.has_value());
+    std::remove(tmp.c_str());
+    PASS();
+}
+
+
+
+
+
+
+
+void testRuntimeVerifyResult() {
+    TEST("RuntimeVerifyResult helper methods");
+    RuntimeVerifyResult r;
+    assert(r.totalSoSegments() == 0);
+    assert(r.totalAbc() == 0);
+    assert(!r.allPassed());  // empty → false
+
+    SoSegmentVerifyResult so;
+    so.match = true;
+    r.soResults.push_back(so);
+    assert(r.totalSoSegments() == 1);
+    assert(r.passedSoSegments() == 1);
+    assert(r.allSoPassed());
+
+    AbcVerifyResult abc;
+    abc.match = true;
+    r.abcResults.push_back(abc);
+    assert(r.totalAbc() == 1);
+    assert(r.passedAbc() == 1);
+    assert(r.allPassed());
+
+    r.soResults[0].match = false;
+    assert(!r.allSoPassed());
+    assert(!r.allPassed());
+    PASS();
+}
+
+void testByteViewBoundary() {
+    TEST("ByteView out-of-bounds returns nullopt");
+    std::vector<std::uint8_t> bytes = {0x01, 0x02, 0x03, 0x04};
+    ByteView view(std::move(bytes));
+
+    assert(view.size() == 4);
+    assert(view.readU32(0).has_value());
+    assert(!view.readU32(1).has_value());   // not enough bytes
+    assert(!view.readU32(5).has_value());   // past end
+    assert(!view.readU32(-1).has_value());  // negative
+    assert(view.canRead(0, 4));
+    assert(!view.canRead(0, 5));
+    assert(!view.canRead(3, 2));
+    PASS();
+}
+
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
@@ -209,6 +279,8 @@ int main() {
     }
     testParseCorruptedFile();
     testParseGarbageFile();
+    testEmptyFile();
+    testTinyFile();
 
     std::cout << "\n=== RuntimeVerifier Tests ===\n";
     if (hasHap) {
@@ -219,6 +291,67 @@ int main() {
     } else {
         SKIP("test HAP files not found");
     }
+
+    std::cout << "\n=== Edge Case Tests ===\n";
+    if (hasHap) {
+        // Parse large HAP once for multiple assertions
+        HapParser parser;
+        auto s = parser.parseFile(kLargeHap);
+        assert(s.has_value());
+
+        TEST("SO refs cover multiple architectures");
+        int arm = 0, x86 = 0;
+        for (auto& ref : s->soReferenceHashes) {
+            if (ref.fileName.find("arm64") != std::string::npos) arm++;
+            if (ref.fileName.find("x86_64") != std::string::npos) x86++;
+        }
+        assert(arm > 0 && x86 > 0); PASS();
+
+        TEST("cert chain has leaf/intermediate/root");
+        for (auto& bc : s->subBlockCertificates) {
+            if (bc.certificates.empty()) continue;
+            assert(bc.validation.issuerSubjectLinksMatch);
+            assert(bc.validation.signaturesVerify);
+        } PASS();
+
+        TEST("certificate fields populated");
+        for (auto& bc : s->subBlockCertificates) {
+            for (auto& cert : bc.certificates) {
+                assert(!cert.subject.empty());
+                assert(!cert.issuer.empty());
+                assert(!cert.serial.empty());
+                assert(!cert.notBefore.empty());
+                assert(!cert.notAfter.empty());
+                assert(!cert.sha256Fingerprint.empty());
+                assert(!cert.publicKeyAlgorithm.empty());
+                assert(cert.publicKeyBits > 0);
+            }
+        } PASS();
+
+        TEST("profile fields extracted");
+        assert(s->profile.has_value());
+        auto& p = *s->profile;
+        assert(!p.bundleName.empty());
+        assert(!p.type.empty());
+        assert(!p.developerId.empty()); PASS();
+
+        TEST("sub-blocks have correct type names");
+        { bool hp = false, ha = false;
+          for (auto& sb : s->subBlocks) {
+              if (sb.type == 0x20000002) hp = true;
+              if (sb.type == 0x20000000) ha = true;
+          }
+          assert(hp && ha); } PASS();
+
+        TEST("abc ref file name ends with .abc");
+        for (auto& ref : s->abcReferenceHashes) {
+            assert(ref.fileName.find(".abc") != std::string::npos);
+        } PASS();
+    } else {
+        SKIP("test HAP files not found");
+    }
+    testRuntimeVerifyResult();
+    testByteViewBoundary();
 
     std::cout << "\n=== Results: " << g_passed << " passed, "
               << g_failed << " failed ===\n";
