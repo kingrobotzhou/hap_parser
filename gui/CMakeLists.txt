@@ -46,6 +46,7 @@ set(HAP_SOURCES
 )
 set(GUI_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/AppState.cpp
 )
 if(APPLE)
     list(APPEND GUI_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/macos_bridge.mm)
