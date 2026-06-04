@@ -1,3 +1,4 @@
+#include "AppState.h"
 #include "HapAnalyzer.h"
 
 #include "imgui.h"
@@ -53,19 +54,12 @@ static std::string resolveFont(const char* name) {
 
 #include <unordered_map>
 
-static int g_lang = 0;
+static AppState g_state;
 
-static const char* _(const char* en, const char* zh) { return g_lang == 1 ? zh : en; }
+static const char* _(const char* en, const char* zh) { return g_state.lang == 1 ? zh : en; }
 
 // ── Global state ────────────────────────────────────────────────────────────
 
-static HapAnalyzerCtx* g_ctx         = nullptr;
-static std::string     g_currentFile;
-static std::string     g_statusMsg;
-static bool            g_fileLoaded  = false;
-static bool            g_loadError   = false;
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
 
 static std::string getAndFree(const char* s) {
     std::string r = s ? s : "";
@@ -96,54 +90,18 @@ static std::string extractCN(const std::string& subject) {
     return cn;
 }
 
-struct CertNode {
-    std::string  role;
-    std::string  subject;
-    std::string  issuer;
-    std::string  serial;
-    std::string  keyInfo;
-    std::string  validity;
-    std::string  sha256;
-    bool         valid;
-    int          chainIdx;
-    int          certIdx;
-};
 
-struct FileEntry {
-    std::string protect;
-    std::string filename;
-    int64_t     size;
-    std::string sha256;
-    int         integrity;   // -1=injected, 0=normal, 1=signed
-    int         manifestCmp; // -1=missing, 0=no-manifest, 1=match, 2=mismatch, 3=added
-    std::string expectedHash;
-};
 
-static std::vector<CertNode>  g_certNodes;
-static std::vector<FileEntry> g_fileEntries;
-static std::vector<std::string> g_missingLibs;
-static std::map<std::string, std::string> g_expectedHashes;
-static bool g_hasManifest = false;
-static bool g_autoManifest = false;
 
 static bool isSystemLib(const std::string& path) {
     if (path.size() < 4 || path.substr(path.size() - 3) != ".so") return false;
     return path.find("libs/") != 0;
 }
 
-struct NestedHap {
-    std::string        name;
-    HapAnalyzerCtx*    ctx = nullptr;
-    std::vector<CertNode>  certNodes;
-    std::vector<FileEntry> fileEntries;
-    std::vector<std::string> missingLibs;
-};
-static std::vector<NestedHap> g_nestedHaps;
-static std::string g_nestedTempDir;
 
 static void loadManifest(const std::string& path) {
-    g_expectedHashes.clear();
-    g_hasManifest = false;
+    g_state.expectedHashes.clear();
+    g_state.hasManifest = false;
     std::ifstream mf(path);
     if (!mf) return;
     std::string content((std::istreambuf_iterator<char>(mf)), {});
@@ -172,17 +130,17 @@ static void loadManifest(const std::string& path) {
         }
         hh.erase(std::remove(hh.begin(), hh.end(), ':'), hh.end());
         std::transform(hh.begin(), hh.end(), hh.begin(), ::tolower);
-        if (!fn.empty() && hh.size() >= 64) g_expectedHashes[fn] = hh;
+        if (!fn.empty() && hh.size() >= 64) g_state.expectedHashes[fn] = hh;
     }
-    g_hasManifest = !g_expectedHashes.empty();
+    g_state.hasManifest = !g_state.expectedHashes.empty();
 }
 
 static void applyManifestToEntries() {
-    if (!g_hasManifest) return;
-    for (auto& e : g_fileEntries) {
+    if (!g_state.hasManifest) return;
+    for (auto& e : g_state.fileEntries) {
         if (isSystemLib(e.filename)) continue;
-        auto it = g_expectedHashes.find(e.filename);
-        if (it != g_expectedHashes.end()) {
+        auto it = g_state.expectedHashes.find(e.filename);
+        if (it != g_state.expectedHashes.end()) {
             e.expectedHash = it->second;
             std::string stripped = e.sha256;
             stripped.erase(std::remove(stripped.begin(), stripped.end(), ':'), stripped.end());
@@ -191,11 +149,11 @@ static void applyManifestToEntries() {
             e.manifestCmp = 3;
         }
     }
-    for (auto& nh : g_nestedHaps) {
+    for (auto& nh : g_state.nestedHaps) {
         for (auto& e : nh.fileEntries) {
             if (isSystemLib(e.filename)) continue;
-            auto it = g_expectedHashes.find(e.filename);
-            if (it != g_expectedHashes.end()) {
+            auto it = g_state.expectedHashes.find(e.filename);
+            if (it != g_state.expectedHashes.end()) {
                 e.expectedHash = it->second;
                 std::string stripped = e.sha256;
                 stripped.erase(std::remove(stripped.begin(), stripped.end(), ':'), stripped.end());
@@ -208,20 +166,20 @@ static void applyManifestToEntries() {
 }
 
 static void saveCurrentAsManifest() {
-    g_expectedHashes.clear();
-    for (auto& e : g_fileEntries) {
+    g_state.expectedHashes.clear();
+    for (auto& e : g_state.fileEntries) {
         if (isSystemLib(e.filename)) continue;
         std::string stripped = e.sha256;
         stripped.erase(std::remove(stripped.begin(), stripped.end(), ':'), stripped.end());
-        g_expectedHashes[e.filename] = stripped;
+        g_state.expectedHashes[e.filename] = stripped;
     }
-    g_hasManifest = true;
-    g_autoManifest = true;
+    g_state.hasManifest = true;
+    g_state.autoManifest = true;
     applyManifestToEntries();
     std::ofstream of(std::string(getenv("HOME")) + "/.hap_analyzer_ref.json");
     of << "{\"files\":{";
     bool first = true;
-    for (auto& kv : g_expectedHashes) {
+    for (auto& kv : g_state.expectedHashes) {
         if (!first) of << ",";
         of << "\n  \"" << kv.first << "\":\"" << kv.second << "\"";
         first = false;
@@ -315,14 +273,14 @@ static void collectNestedEntries(HapAnalyzerCtx* ctx, NestedHap& nh) {
 }
 
 static void parseNestedHaps(const std::string& appPath) {
-    for (auto& nh : g_nestedHaps) { if (nh.ctx) hap_analyzer_destroy(nh.ctx); }
-    g_nestedHaps.clear();
-    if (!g_nestedTempDir.empty()) {
-        std::string cmd = "rm -rf " + g_nestedTempDir;
+    for (auto& nh : g_state.nestedHaps) { if (nh.ctx) hap_analyzer_destroy(nh.ctx); }
+    g_state.nestedHaps.clear();
+    if (!g_state.nestedTempDir.empty()) {
+        std::string cmd = "rm -rf " + g_state.nestedTempDir;
         system(cmd.c_str());
     }
-    g_nestedTempDir = "/tmp/hap_nested_" + std::to_string(getpid());
-    mkdir(g_nestedTempDir.c_str(), 0755);
+    g_state.nestedTempDir = "/tmp/hap_nested_" + std::to_string(getpid());
+    mkdir(g_state.nestedTempDir.c_str(), 0755);
 
     char buf[4096];
     std::string cmd = "python3 -c \"import zipfile; [print(n) for n in zipfile.ZipFile('"
@@ -334,7 +292,7 @@ static void parseNestedHaps(const std::string& appPath) {
         name.erase(name.find_last_not_of("\n\r") + 1);
         if (name.empty()) continue;
 
-        std::string outPath = g_nestedTempDir + "/" + name;
+        std::string outPath = g_state.nestedTempDir + "/" + name;
         std::string outDir = outPath.substr(0, outPath.rfind('/'));
         mkdir(outDir.c_str(), 0755);
         std::string extCmd = "python3 -c \"import zipfile,sys; z=zipfile.ZipFile('"
@@ -348,7 +306,7 @@ static void parseNestedHaps(const std::string& appPath) {
             nh.name = name;
             nh.ctx  = ctx;
             collectNestedEntries(ctx, nh);
-            g_nestedHaps.push_back(std::move(nh));
+            g_state.nestedHaps.push_back(std::move(nh));
         } else {
             hap_analyzer_destroy(ctx);
         }
@@ -359,29 +317,29 @@ static void parseNestedHaps(const std::string& appPath) {
 // ── Load file ───────────────────────────────────────────────────────────────
 
 static void loadFile(const std::string& path) {
-    if (g_ctx) hap_analyzer_destroy(g_ctx);
-    g_ctx        = hap_analyzer_create();
-    g_loadError  = false;
-    g_currentFile.clear();
+    if (g_state.ctx) hap_analyzer_destroy(g_state.ctx);
+    g_state.ctx        = hap_analyzer_create();
+    g_state.loadError  = false;
+    g_state.currentFile.clear();
 
-    if (!hap_analyzer_load(g_ctx, path.c_str())) {
-        g_statusMsg  = std::string(_("Failed to parse: ", "解析失败: ")) + path;
-        g_fileLoaded = false;
-        g_loadError  = true;
-        g_certNodes.clear();
-        g_fileEntries.clear();
+    if (!hap_analyzer_load(g_state.ctx, path.c_str())) {
+        g_state.statusMsg  = std::string(_("Failed to parse: ", "解析失败: ")) + path;
+        g_state.fileLoaded = false;
+        g_state.loadError  = true;
+        g_state.certNodes.clear();
+        g_state.fileEntries.clear();
         return;
     }
 
-    g_currentFile = path;
-    g_statusMsg   = std::string(_("Loaded: ", "已加载: ")) + path;
-    g_fileLoaded  = true;
-    g_loadError   = false;
+    g_state.currentFile = path;
+    g_state.statusMsg   = std::string(_("Loaded: ", "已加载: ")) + path;
+    g_state.fileLoaded  = true;
+    g_state.loadError   = false;
 
-    g_certNodes.clear();
-    int chainCount = hap_get_cert_chain_count(g_ctx);
+    g_state.certNodes.clear();
+    int chainCount = hap_get_cert_chain_count(g_state.ctx);
     for (int ci = 0; ci < chainCount; ci++) {
-        int certCount = hap_get_cert_count(ci, g_ctx);
+        int certCount = hap_get_cert_count(ci, g_state.ctx);
         for (int i = 0; i < certCount; i++) {
             CertNode n;
             n.chainIdx = ci; n.certIdx = i;
@@ -389,29 +347,29 @@ static void loadFile(const std::string& path) {
             else if (i == 0) n.role = "leaf";
             else if (i == certCount - 1) n.role = "root";
             else n.role = "inter";
-            n.subject  = getAndFree(hap_get_cert_subject(ci, i, g_ctx));
-            n.issuer   = getAndFree(hap_get_cert_issuer(ci, i, g_ctx));
-            n.sha256   = getAndFree(hap_get_cert_sha256(ci, i, g_ctx));
-            n.keyInfo  = getAndFree(hap_get_cert_key_info(ci, i, g_ctx));
-            n.validity = getAndFree(hap_get_cert_validity(ci, i, g_ctx));
-            n.valid    = hap_get_cert_is_valid(ci, i, g_ctx) != 0;
-            g_certNodes.push_back(n);
+            n.subject  = getAndFree(hap_get_cert_subject(ci, i, g_state.ctx));
+            n.issuer   = getAndFree(hap_get_cert_issuer(ci, i, g_state.ctx));
+            n.sha256   = getAndFree(hap_get_cert_sha256(ci, i, g_state.ctx));
+            n.keyInfo  = getAndFree(hap_get_cert_key_info(ci, i, g_state.ctx));
+            n.validity = getAndFree(hap_get_cert_validity(ci, i, g_state.ctx));
+            n.valid    = hap_get_cert_is_valid(ci, i, g_state.ctx) != 0;
+            g_state.certNodes.push_back(n);
         }
     }
 
     bool isApp = path.size() > 4 && path.substr(path.size() - 4) == ".app";
     if (isApp) parseNestedHaps(path);
-    else g_nestedHaps.clear();
+    else g_state.nestedHaps.clear();
 
     // ── Collect file entries ───────────────────────────────────────────
-    g_fileEntries.clear();
-    g_missingLibs.clear();
-    bool hasCodeSign = hap_has_code_sign(g_ctx) != 0;
+    g_state.fileEntries.clear();
+    g_state.missingLibs.clear();
+    bool hasCodeSign = hap_has_code_sign(g_state.ctx) != 0;
 
     std::set<std::string> signedLibBases;
-    int libCount = hap_get_code_sign_lib_count(g_ctx);
+    int libCount = hap_get_code_sign_lib_count(g_state.ctx);
     for (int i = 0; i < libCount; i++) {
-        const char* lib = hap_get_code_sign_lib(i, g_ctx);
+        const char* lib = hap_get_code_sign_lib(i, g_state.ctx);
         std::string name(lib);
         free((char*)lib);
         if (name.find("binary code-signing") != std::string::npos) continue;
@@ -422,15 +380,15 @@ static void loadFile(const std::string& path) {
             signedLibBases.insert(name);
     }
 
-    int64_t fileCount = hap_get_file_count(g_ctx);
-    g_fileEntries.reserve(static_cast<size_t>(fileCount));
+    int64_t fileCount = hap_get_file_count(g_state.ctx);
+    g_state.fileEntries.reserve(static_cast<size_t>(fileCount));
     std::set<std::string> zipSoPaths;
     std::set<std::string> archDirs;
     for (int64_t i = 0; i < fileCount; i++) {
         FileEntry e;
-        e.filename  = getAndFree(hap_get_filename(i, g_ctx));
-        e.size      = hap_get_file_size_at(i, g_ctx);
-        e.sha256    = getAndFree(hap_get_file_sha256(i, g_ctx));
+        e.filename  = getAndFree(hap_get_filename(i, g_state.ctx));
+        e.size      = hap_get_file_size_at(i, g_state.ctx);
+        e.sha256    = getAndFree(hap_get_file_sha256(i, g_state.ctx));
         bool isSo   = e.filename.size() > 3 && e.filename.substr(e.filename.size() - 3) == ".so";
         e.protect   = (isSo && hasCodeSign) ? "CodeSign" : "PKCS7";
         e.integrity = 0;
@@ -446,7 +404,7 @@ static void loadFile(const std::string& path) {
             if (hasCodeSign && !inList) e.integrity = -1;
             else if (inList) e.integrity = 1;
         }
-        g_fileEntries.push_back(e);
+        g_state.fileEntries.push_back(e);
     }
 
     for (const auto& base : signedLibBases) {
@@ -464,18 +422,18 @@ static void loadFile(const std::string& path) {
         }
         if (!foundUnderArch) continue;
         if (!foundAny) {
-            g_missingLibs.push_back(base);
+            g_state.missingLibs.push_back(base);
             continue;
         }
         for (const auto& arch : archDirs) {
             std::string expected = arch + "/" + base;
             if (zipSoPaths.find(expected) == zipSoPaths.end())
-                g_missingLibs.push_back(expected);
+                g_state.missingLibs.push_back(expected);
         }
     }
 
     applyManifestToEntries();
-    if (!g_hasManifest && !isApp) saveCurrentAsManifest();
+    if (!g_state.hasManifest && !isApp) saveCurrentAsManifest();
 }
 
 // ── Drop zone ───────────────────────────────────────────────────────────────
@@ -496,12 +454,12 @@ static void renderDropZone() {
     ImGui::SetCursorPos(ImVec2(12, textY - 4));
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.85f, 0.87f, 1.0f));
     if (ImGui::Button(_("EN", "中文"), ImVec2(56, 28))) {
-        g_lang = g_lang ? 0 : 1;
+        g_state.lang = g_state.lang ? 0 : 1;
     }
     ImGui::PopStyleColor();
 
-    const char* label = g_fileLoaded
-        ? g_currentFile.c_str()
+    const char* label = g_state.fileLoaded
+        ? g_state.currentFile.c_str()
         : _("Drop .hap / .app file here", "拖放 .hap / .app 文件至此");
 
     ImVec2 textSize = ImGui::CalcTextSize(label);
@@ -519,15 +477,15 @@ static void renderDropZone() {
 // ── Summary tab ─────────────────────────────────────────────────────────────
 
 static void renderSummaryTab() {
-    if (!g_fileLoaded) {
+    if (!g_state.fileLoaded) {
         ImGui::TextDisabled("%s", _("No file loaded. Drop a .hap file or use File > Open.",
                                      "未加载文件。拖放 .hap 文件或使用 文件 > 打开。"));
         return;
     }
 
     // ── Verdict banner ──────────────────────────────────────────────────
-    const char* verdict = hap_get_verdict(g_ctx);
-    const char* summary = hap_get_verdict_summary(g_ctx);
+    const char* verdict = hap_get_verdict(g_state.ctx);
+    const char* summary = hap_get_verdict_summary(g_state.ctx);
 
     ImVec4 color;
     if (std::strcmp(verdict, "PASS") == 0)
@@ -565,24 +523,24 @@ static void renderSummaryTab() {
     // ── File info ───────────────────────────────────────────────────────
     if (ImGui::CollapsingHeader(_("File Info", "文件信息"), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent(12.0f);
-        ImGui::Text("%s %s", _("File Size:", "文件大小:"), formatSize(hap_get_file_size(g_ctx)).c_str());
+        ImGui::Text("%s %s", _("File Size:", "文件大小:"), formatSize(hap_get_file_size(g_state.ctx)).c_str());
         ImGui::Text("%s %d %s (version %d)",
-                    _("Sign Blocks:", "签名块:"), hap_get_subblock_count(g_ctx),
-                    _("blocks", "个"), hap_get_chain_version(g_ctx));
-        ImGui::Text("%s %lld %s", _("ZIP Entries:", "ZIP条目:"), hap_get_file_count(g_ctx),
+                    _("Sign Blocks:", "签名块:"), hap_get_subblock_count(g_state.ctx),
+                    _("blocks", "个"), hap_get_chain_version(g_state.ctx));
+        ImGui::Text("%s %lld %s", _("ZIP Entries:", "ZIP条目:"), hap_get_file_count(g_state.ctx),
                     _("files", "个文件"));
         ImGui::Unindent(12.0f);
     }
 
     // ── Profile ─────────────────────────────────────────────────────────
-    const char* bundle  = hap_get_profile_field("bundle", g_ctx);
-    const char* devId   = hap_get_profile_field("devid", g_ctx);
-    const char* appId   = hap_get_profile_field("appid", g_ctx);
-    const char* type    = hap_get_profile_field("type", g_ctx);
-    const char* apl     = hap_get_profile_field("apl", g_ctx);
-    const char* issuer  = hap_get_profile_field("issuer", g_ctx);
-    const char* certFp  = hap_get_profile_field("certfp", g_ctx);
-    const char* valid   = hap_get_profile_field("validity", g_ctx);
+    const char* bundle  = hap_get_profile_field("bundle", g_state.ctx);
+    const char* devId   = hap_get_profile_field("devid", g_state.ctx);
+    const char* appId   = hap_get_profile_field("appid", g_state.ctx);
+    const char* type    = hap_get_profile_field("type", g_state.ctx);
+    const char* apl     = hap_get_profile_field("apl", g_state.ctx);
+    const char* issuer  = hap_get_profile_field("issuer", g_state.ctx);
+    const char* certFp  = hap_get_profile_field("certfp", g_state.ctx);
+    const char* valid   = hap_get_profile_field("validity", g_state.ctx);
 
     bool hasProfile = std::strlen(bundle) > 0 || std::strlen(type) > 0;
     if (hasProfile && ImGui::CollapsingHeader(_("Provision Profile", "配置描述文件"), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -605,10 +563,10 @@ static void renderSummaryTab() {
     if (ImGui::CollapsingHeader(_("Code Signing", "代码签名"))) {
         ImGui::Indent(12.0f);
         ImGui::Text("%s %s", _("Code Signing:", "代码签名:"),
-                    hap_has_code_sign(g_ctx) ? _("Present", "已启用") : _("Not detected", "未检测到"));
-        int libCount = hap_get_code_sign_lib_count(g_ctx);
+                    hap_has_code_sign(g_state.ctx) ? _("Present", "已启用") : _("Not detected", "未检测到"));
+        int libCount = hap_get_code_sign_lib_count(g_state.ctx);
         for (int i = 0; i < libCount; i++) {
-            const char* lib = hap_get_code_sign_lib(i, g_ctx);
+            const char* lib = hap_get_code_sign_lib(i, g_state.ctx);
             ImGui::Text("  - %s", lib);
             free((char*)lib);
         }
@@ -616,12 +574,12 @@ static void renderSummaryTab() {
     }
 
     // ── Certificate chains summary ──────────────────────────────────────
-    int chainCount = hap_get_cert_chain_count(g_ctx);
+    int chainCount = hap_get_cert_chain_count(g_state.ctx);
     if (chainCount > 0 && ImGui::CollapsingHeader(_("Certificate Chains", "证书链"), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent(12.0f);
         for (int ci = 0; ci < chainCount; ci++) {
-            int certCount = hap_get_cert_count(ci, g_ctx);
-            int contentOk = hap_get_chain_content_ok(ci, g_ctx);
+            int certCount = hap_get_cert_count(ci, g_state.ctx);
+            int contentOk = hap_get_chain_content_ok(ci, g_state.ctx);
             ImGui::Text(_("Chain %d: %d certificates", "链 %d: %d 个证书"), ci + 1, certCount);
             if (contentOk >= 0) {
                 ImGui::SameLine();
@@ -634,7 +592,7 @@ static void renderSummaryTab() {
             }
             int validCerts = 0;
             for (int i = 0; i < certCount; i++) {
-                if (hap_get_cert_is_valid(ci, i, g_ctx)) validCerts++;
+                if (hap_get_cert_is_valid(ci, i, g_state.ctx)) validCerts++;
             }
             ImGui::SameLine();
             if (validCerts == certCount)
@@ -647,11 +605,11 @@ static void renderSummaryTab() {
         ImGui::Unindent(12.0f);
     }
 
-    if (!g_nestedHaps.empty() && ImGui::CollapsingHeader(
+    if (!g_state.nestedHaps.empty() && ImGui::CollapsingHeader(
             _("Inner HAP Packages", "内部 HAP 包"), ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Indent(12.0f);
-        for (size_t ni = 0; ni < g_nestedHaps.size(); ni++) {
-            auto& nh = g_nestedHaps[ni];
+        for (size_t ni = 0; ni < g_state.nestedHaps.size(); ni++) {
+            auto& nh = g_state.nestedHaps[ni];
             ImGui::Text("%s", nh.name.c_str());
             ImGui::SameLine();
             const char* nhv = hap_get_verdict(nh.ctx);
@@ -671,28 +629,28 @@ static void renderSummaryTab() {
 // ── Certificates tab ────────────────────────────────────────────────────────
 
 static void renderCertificatesTab() {
-    if (!g_fileLoaded) {
+    if (!g_state.fileLoaded) {
         ImGui::TextDisabled("%s", _("No file loaded.", "未加载文件。"));
         return;
     }
 
-    if (g_certNodes.empty()) {
+    if (g_state.certNodes.empty()) {
         ImGui::TextDisabled("%s", _("No certificates found in this file.", "此文件中未找到证书。"));
         return;
     }
 
     // Group nodes by chain
     int prevChain = -1;
-    for (size_t i = 0; i < g_certNodes.size(); i++) {
-        const auto& n = g_certNodes[i];
+    for (size_t i = 0; i < g_state.certNodes.size(); i++) {
+        const auto& n = g_state.certNodes[i];
 
         // Chain header
         if (n.chainIdx != prevChain) {
             if (prevChain >= 0) ImGui::TreePop();
             prevChain = n.chainIdx;
 
-            int chainCertCount = hap_get_cert_count(n.chainIdx, g_ctx);
-            int contentOk = hap_get_chain_content_ok(n.chainIdx, g_ctx);
+            int chainCertCount = hap_get_cert_count(n.chainIdx, g_state.ctx);
+            int contentOk = hap_get_chain_content_ok(n.chainIdx, g_state.ctx);
             char label[128];
             const char* contentStatus = "";
             if (contentOk == 1)       contentStatus = _("  [content OK]", "  [内容完整]");
@@ -702,7 +660,7 @@ static void renderCertificatesTab() {
             ImGui::SetNextItemOpen(true, ImGuiCond_Once);
             if (!ImGui::TreeNode(label)) {
                 // Skip all certs in this chain
-                while (i + 1 < g_certNodes.size() && g_certNodes[i + 1].chainIdx == n.chainIdx)
+                while (i + 1 < g_state.certNodes.size() && g_state.certNodes[i + 1].chainIdx == n.chainIdx)
                     i++;
                 prevChain = -1;  // reset for next chain
                 continue;
@@ -724,8 +682,8 @@ static void renderCertificatesTab() {
     }
     if (prevChain >= 0) ImGui::TreePop();
 
-    const char* devCertFp = hap_get_profile_field("certfp", g_ctx);
-    int idCount = hap_get_identity_chain_count(g_ctx);
+    const char* devCertFp = hap_get_profile_field("certfp", g_state.ctx);
+    int idCount = hap_get_identity_chain_count(g_state.ctx);
     if (std::strlen(devCertFp) > 0 || idCount > 0) {
         ImGui::Spacing();
         char idHdr[128];
@@ -734,11 +692,11 @@ static void renderCertificatesTab() {
         if (ImGui::CollapsingHeader(idHdr, ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Indent(12.0f);
             for (int idx = 0; idx < idCount; idx++) {
-                std::string subj = getAndFree(hap_get_identity_cert_subject(idx, g_ctx));
-                std::string sha  = getAndFree(hap_get_identity_cert_sha256(idx, g_ctx));
-                std::string key  = getAndFree(hap_get_identity_cert_key_info(idx, g_ctx));
-                std::string val  = getAndFree(hap_get_identity_cert_validity(idx, g_ctx));
-                bool valid = hap_get_identity_cert_is_valid(idx, g_ctx) != 0;
+                std::string subj = getAndFree(hap_get_identity_cert_subject(idx, g_state.ctx));
+                std::string sha  = getAndFree(hap_get_identity_cert_sha256(idx, g_state.ctx));
+                std::string key  = getAndFree(hap_get_identity_cert_key_info(idx, g_state.ctx));
+                std::string val  = getAndFree(hap_get_identity_cert_validity(idx, g_state.ctx));
+                bool valid = hap_get_identity_cert_is_valid(idx, g_state.ctx) != 0;
                 bool isAnchor = sha.empty();
 
                 if (isAnchor) {
@@ -767,8 +725,8 @@ static void renderCertificatesTab() {
     }
     free((char*)devCertFp);
 
-    for (size_t ni = 0; ni < g_nestedHaps.size(); ni++) {
-        auto& nh = g_nestedHaps[ni];
+    for (size_t ni = 0; ni < g_state.nestedHaps.size(); ni++) {
+        auto& nh = g_state.nestedHaps[ni];
         if (nh.certNodes.empty()) continue;
         ImGui::Spacing();
         if (ImGui::TreeNode(nh.name.c_str())) {
@@ -811,12 +769,12 @@ static void renderCertificatesTab() {
 
 static void renderFileTable(const char* id, const std::vector<FileEntry>& entries,
                              const std::vector<int>& indices, float height) {
-    int ncols = g_hasManifest ? 6 : 5;
+    int ncols = g_state.hasManifest ? 6 : 5;
     if (!ImGui::BeginTable(id, ncols, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg |
                            ImGuiTableFlags_BordersV | ImGuiTableFlags_Resizable,
                            ImVec2(0, height))) return;
     ImGui::TableSetupColumn(_("Status", "状态"), ImGuiTableColumnFlags_WidthFixed, 60.0f);
-    if (g_hasManifest)
+    if (g_state.hasManifest)
         ImGui::TableSetupColumn(_("Match", "匹配"), ImGuiTableColumnFlags_WidthFixed, 50.0f);
     ImGui::TableSetupColumn(_("Protect", "保护"), ImGuiTableColumnFlags_WidthFixed, 70.0f);
     ImGui::TableSetupColumn(_("File", "文件"), ImGuiTableColumnFlags_WidthStretch);
@@ -838,7 +796,7 @@ static void renderFileTable(const char* id, const std::vector<FileEntry>& entrie
             else ImGui::TextUnformatted("-");
 
             int col = 1;
-            if (g_hasManifest) {
+            if (g_state.hasManifest) {
                 ImGui::TableSetColumnIndex(col++);
                 switch (e.manifestCmp) {
                 case 1: break;
@@ -891,10 +849,10 @@ static void renderStructureSection(const std::vector<FileEntry>& entries,
     }
 
     ImGui::Text("%zu %s", entries.size(), _("files", "个文件"));
-    if (g_hasManifest) {
+    if (g_state.hasManifest) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.0f,0.48f,1.0f,1.0f),
-            g_autoManifest ? "  [auto-ref]" : "  [manifest]");
+            g_state.autoManifest ? "  [auto-ref]" : "  [manifest]");
     }
     ImGui::SameLine();
     if (!mismatched.empty())
@@ -945,20 +903,20 @@ static void renderStructureSection(const std::vector<FileEntry>& entries,
 }
 
 static void renderStructureTab() {
-    if (!g_fileLoaded) {
+    if (!g_state.fileLoaded) {
         ImGui::TextDisabled("%s", _("No file loaded.", "未加载文件。"));
         return;
     }
-    if (g_fileEntries.empty()) {
+    if (g_state.fileEntries.empty()) {
         ImGui::TextDisabled("%s", _("No files found in ZIP.", "ZIP 中未找到文件。"));
         return;
     }
 
     ImGui::Separator();
-    renderStructureSection(g_fileEntries, &g_missingLibs, "main");
+    renderStructureSection(g_state.fileEntries, &g_state.missingLibs, "main");
 
-    for (size_t ni = 0; ni < g_nestedHaps.size(); ni++) {
-        auto& nh = g_nestedHaps[ni];
+    for (size_t ni = 0; ni < g_state.nestedHaps.size(); ni++) {
+        auto& nh = g_state.nestedHaps[ni];
         if (nh.fileEntries.empty()) continue;
         ImGui::Spacing();
         char label[256];
@@ -1080,7 +1038,7 @@ int main(int argc, char** argv) {
 
     std::string refPath = std::string(getenv("HOME")) + "/.hap_analyzer_ref.json";
     loadManifest(refPath);
-    g_autoManifest = g_hasManifest;
+    g_state.autoManifest = g_state.hasManifest;
 
     if (!cliFile.empty()) loadFile(cliFile);
 
@@ -1120,17 +1078,17 @@ int main(int argc, char** argv) {
                     if (mp) { loadManifest(mp); applyManifestToEntries(); free((void*)mp); }
 #endif
                 }
-                if (g_fileLoaded && ImGui::MenuItem(_("Set as Reference", "设为基准"))) {
+                if (g_state.fileLoaded && ImGui::MenuItem(_("Set as Reference", "设为基准"))) {
                     saveCurrentAsManifest();
                 }
-                if (g_hasManifest && ImGui::MenuItem(_("Clear Reference", "清除基准"))) {
-                    g_expectedHashes.clear();
-                    g_hasManifest = false;
-                    g_autoManifest = false;
+                if (g_state.hasManifest && ImGui::MenuItem(_("Clear Reference", "清除基准"))) {
+                    g_state.expectedHashes.clear();
+                    g_state.hasManifest = false;
+                    g_state.autoManifest = false;
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem(_("Language / 语言", "语言 / Language"))) {
-                    g_lang = g_lang ? 0 : 1;
+                    g_state.lang = g_state.lang ? 0 : 1;
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem(_("Quit", "退出"), "Cmd+Q")) {
@@ -1138,9 +1096,9 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndMenu();
             }
-            if (g_fileLoaded && ImGui::BeginMenu(_("View", "查看"))) {
+            if (g_state.fileLoaded && ImGui::BeginMenu(_("View", "查看"))) {
                 if (ImGui::MenuItem(_("Reload", "重新加载"), "Cmd+R")) {
-                    loadFile(g_currentFile);
+                    loadFile(g_state.currentFile);
                 }
                 ImGui::EndMenu();
             }
@@ -1151,11 +1109,11 @@ int main(int argc, char** argv) {
         renderDropZone();
 
         // ── Status bar ──────────────────────────────────────────────────
-        if (!g_statusMsg.empty()) {
+        if (!g_state.statusMsg.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Text,
-                g_loadError ? ImVec4(1.00f, 0.23f, 0.19f, 1.0f)
+                g_state.loadError ? ImVec4(1.00f, 0.23f, 0.19f, 1.0f)
                             : ImVec4(0.20f, 0.78f, 0.35f, 1.0f));
-            ImGui::TextWrapped("%s", g_statusMsg.c_str());
+            ImGui::TextWrapped("%s", g_state.statusMsg.c_str());
             ImGui::PopStyleColor();
             ImGui::Separator();
         }
@@ -1195,7 +1153,7 @@ int main(int argc, char** argv) {
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    if (g_ctx) hap_analyzer_destroy(g_ctx);
+    if (g_state.ctx) hap_analyzer_destroy(g_state.ctx);
 
     glfwDestroyWindow(window);
     glfwTerminate();
